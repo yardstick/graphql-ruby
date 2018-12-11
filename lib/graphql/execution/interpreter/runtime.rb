@@ -298,7 +298,7 @@ module GraphQL
               idx += 1
               set_type_at_path(next_path, inner_type)
               # This will update `response_list` with the lazy
-              after_lazy(inner_value, path: next_path, field: field) do |inner_inner_value|
+              response_list[idx - 1] = after_lazy(inner_value, path: next_path, field: field) do |inner_inner_value|
                 # reset `is_non_null` here and below, because the inner type will have its own nullability constraint
                 continue_value = continue_value(next_path, inner_inner_value, field, false, ast_node)
                 if HALT != continue_value
