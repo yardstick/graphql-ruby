@@ -243,6 +243,10 @@ module GraphQL
           end
         end
 
+        class Unpopulated
+        end
+        UNPOPULATED = Unpopulated.new
+
         # The resolver for `field` returned `value`. Continue to execute the query,
         # treating `value` as `type` (probably the return type of the field).
         #
@@ -287,7 +291,9 @@ module GraphQL
               end
             end
           when "LIST"
-            response_list = []
+            # TODO is it fair to expect list objects to implement `#length`?
+            # (as well as `#each`, used below)
+            response_list = Array.new(value.length, UNPOPULATED)
             write_in_response(path, response_list)
             inner_type = type.of_type
             idx = 0
