@@ -73,7 +73,8 @@ module GraphQL
     # @param max_complexity [Numeric] the maximum field complexity for this query (falls back to schema-level value)
     # @param except [<#call(schema_member, context)>] If provided, objects will be hidden from the schema when `.call(schema_member, context)` returns truthy
     # @param only [<#call(schema_member, context)>] If provided, objects will be hidden from the schema when `.call(schema_member, context)` returns false
-    def initialize(schema, query_string = nil, query: nil, document: nil, context: nil, variables: nil, validate: true, subscription_topic: nil, operation_name: nil, root_value: nil, max_depth: nil, max_complexity: nil, except: nil, only: nil)
+    # @param interpreter [Boolean] If true, use the new {GraphQL::Execution::Interpreter} for this query
+    def initialize(schema, query_string = nil, query: nil, document: nil, context: nil, variables: nil, validate: true, subscription_topic: nil, operation_name: nil, root_value: nil, max_depth: nil, max_complexity: nil, except: nil, only: nil, interpreter: false)
       # Even if `variables: nil` is passed, use an empty hash for simpler logic
       variables ||= {}
       @schema = schema
@@ -133,6 +134,10 @@ module GraphQL
       if @schema.respond_to?(:visible?)
         merge_filters(only: @schema.method(:visible?))
       end
+
+      @query_execution_strategy = interpreter ? GraphQL::Execution::Interpreter : @schema.query_execution_strategy
+      @mutation_execution_strategy = interpreter ? GraphQL::Execution::Interpreter : @schema.mutation_execution_strategy
+      @subscription_execution_strategy = interpreter ? GraphQL::Execution::Interpreter : @schema.subscription_execution_strategy
     end
 
     def_delegators :@schema, :interpreter?
@@ -270,6 +275,19 @@ module GraphQL
 
     def query?
       with_prepared_ast { @query }
+    end
+
+    def execution_strategy_for_operation(operation_type)
+      case operation_type
+      when "query"
+        @query_execution_strategy
+      when "mutation"
+        @mutation_execution_strategy
+      when "subscription"
+        @subscription_execution_strategy
+      else
+        raise ArgumentError, "unknown operation type: #{operation}"
+      end
     end
 
     # @return [void]

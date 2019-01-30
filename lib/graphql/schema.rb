@@ -453,19 +453,6 @@ module GraphQL
       end
     end
 
-    def execution_strategy_for_operation(operation)
-      case operation
-      when "query"
-        query_execution_strategy
-      when "mutation"
-        mutation_execution_strategy
-      when "subscription"
-        subscription_execution_strategy
-      else
-        raise ArgumentError, "unknown operation type: #{operation}"
-      end
-    end
-
     # Determine the GraphQL type for a given object.
     # This is required for unions and interfaces (including Relay's `Node` interface)
     # @see [GraphQL::Schema::Warden] Restricted access to members of a schema
@@ -691,7 +678,6 @@ module GraphQL
         :execute, :multiplex,
         :static_validator, :introspection_system,
         :query_analyzers, :tracers, :instrumenters,
-        :execution_strategy_for_operation,
         :validate, :multiplex_analyzers, :lazy?, :lazy_method_name, :after_lazy, :sync_lazy,
         # Configuration
         :analysis_engine, :analysis_engine=, :using_ast_analysis?, :interpreter?,

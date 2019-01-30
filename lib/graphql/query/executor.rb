@@ -30,7 +30,7 @@ module GraphQL
 
         op_type = operation.operation_type
         root_type = query.root_type_for_operation(op_type)
-        execution_strategy_class = query.schema.execution_strategy_for_operation(op_type)
+        execution_strategy_class = query.execution_strategy_for_operation(op_type)
         execution_strategy = execution_strategy_class.new
 
         query.context.execution_strategy = execution_strategy
