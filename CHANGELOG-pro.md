@@ -8,6 +8,29 @@
 
 ### Bug Fix
 
+## 1.9.12 (22 Feb 2019)
+
+- Pundit integration: use overriden `pundit_policy_class` for scoping and mutation authorization
+
+## 1.9.11 (20 Feb 2019)
+
+### Bug Fix
+
+- Pundit integration: Fields use the owner's configured `pundit_policy_class` if there is one
+- Pundit integration: avoid conflicts with `#initialize` for schema classes that don't need it
+
+## 1.9.10 (19 Feb 2019)
+
+### Bug Fix
+
+- Support inheritance with `pundit_policy_class(...)`
+
+## 1.9.9 (13 Feb 2019)
+
+### New Features
+
+- Support `pundit_policy_class(...)` and `pundit_policy_class:` to manually specify a class or class name.
+
 ## 1.9.8 (30 Jan 2019)
 
 ### New Features

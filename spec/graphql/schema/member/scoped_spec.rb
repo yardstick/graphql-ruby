@@ -13,7 +13,8 @@ describe GraphQL::Schema::Member::Scoped do
         elsif context[:english]
           items.select { |i| i.name == "Paperclip" }
         else
-          []
+          # boot everything
+          items.reject { true }
         end
       end
 
@@ -55,10 +56,25 @@ describe GraphQL::Schema::Member::Scoped do
       field :unscoped_items, [Item], null: false,
         scope: false,
         resolver_method: :items
+
+      field :nil_items, [Item], null: true
+      def nil_items
+        nil
+      end
+
       field :french_items, [FrenchItem], null: false,
         resolver_method: :items
-      field :items_connection, Item.connection_type, null: false,
-        resolver_method: :items
+      if TESTING_INTERPRETER
+        field :items_connection, Item.connection_type, null: false,
+          resolver_method: :items
+      else
+        field :items_connection, Item.connection_type, null: false, resolve: ->(obj, args, ctx) {
+          [
+            OpenStruct.new(name: "Trombone"),
+            OpenStruct.new(name: "Paperclip"),
+          ]
+        }
+      end
 
       def items
         [
@@ -67,9 +83,20 @@ describe GraphQL::Schema::Member::Scoped do
         ]
       end
 
-      field :things, [Thing], null: false
-      def things
-        items + [OpenStruct.new(name: "Turbine")]
+      if TESTING_INTERPRETER
+        field :things, [Thing], null: false
+        def things
+          items + [OpenStruct.new(name: "Turbine")]
+        end
+      else
+        # Make sure it works with resolve procs, too
+        field :things, [Thing], null: false, resolve: ->(obj, args, ctx) {
+          [
+            OpenStruct.new(name: "Trombone"),
+            OpenStruct.new(name: "Paperclip"),
+            OpenStruct.new(name: "Turbine"),
+          ]
+        }
       end
     end
 
@@ -100,6 +127,19 @@ describe GraphQL::Schema::Member::Scoped do
 
     it "is bypassed when scope: false" do
       assert_equal ["Trombone", "Paperclip"], get_item_names_with_context({}, field_name: "unscopedItems")
+    end
+
+    it "returns null when the value is nil" do
+      query_str = "
+      {
+        nilItems {
+          name
+        }
+      }
+      "
+      res = ScopeSchema.execute(query_str)
+      refute res.key?("errors")
+      assert_nil res.fetch("data").fetch("nilItems")
     end
 
     it "is inherited" do

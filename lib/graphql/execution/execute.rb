@@ -50,12 +50,16 @@ module GraphQL
             operation = query.selected_operation
             op_type = operation.operation_type
             root_type = query.root_type_for_operation(op_type)
-            resolve_selection(
-              query.root_value,
-              root_type,
-              query.context,
-              mutation: query.mutation?
-            )
+            if query.context[:__root_unauthorized]
+              # This was set by member/instrumentation.rb so that we wouldn't continue.
+            else
+              resolve_selection(
+                query.root_value,
+                root_type,
+                query.context,
+                mutation: query.mutation?
+              )
+            end
           end
         end
 
@@ -281,20 +285,22 @@ module GraphQL
               )
             when GraphQL::TypeKinds::UNION, GraphQL::TypeKinds::INTERFACE
               query = field_ctx.query
-              resolved_type = field_type.resolve_type(value, field_ctx)
-              possible_types = query.possible_types(field_type)
+              resolved_type_or_lazy = field_type.resolve_type(value, field_ctx)
+              query.schema.after_lazy(resolved_type_or_lazy) do |resolved_type|
+                possible_types = query.possible_types(field_type)
 
-              if !possible_types.include?(resolved_type)
-                parent_type = field_ctx.irep_node.owner_type
-                type_error = GraphQL::UnresolvedTypeError.new(value, field_defn, parent_type, resolved_type, possible_types)
-                field_ctx.schema.type_error(type_error, field_ctx)
-                PROPAGATE_NULL
-              else
-                resolve_value(
-                  value,
-                  resolved_type,
-                  field_ctx,
-                )
+                if !possible_types.include?(resolved_type)
+                  parent_type = field_ctx.irep_node.owner_type
+                  type_error = GraphQL::UnresolvedTypeError.new(value, field_defn, parent_type, resolved_type, possible_types)
+                  field_ctx.schema.type_error(type_error, field_ctx)
+                  PROPAGATE_NULL
+                else
+                  resolve_value(
+                    value,
+                    resolved_type,
+                    field_ctx,
+                  )
+                end
               end
             else
               raise("Unknown type kind: #{field_type.kind}")

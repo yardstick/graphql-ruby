@@ -49,9 +49,15 @@ module GraphQL
           root_type = legacy_root_type.metadata[:type_class] || raise("Invariant: type must be class-based: #{legacy_root_type}")
           object_proxy = root_type.authorized_new(query.root_value, context)
           object_proxy = schema.sync_lazy(object_proxy)
-          path = []
-          evaluate_selections(path, object_proxy, root_type, root_operation.selections, root_operation_type: root_op_type)
-          nil
+          if object_proxy.nil?
+            # Root .authorized? returned false.
+            write_in_response([], nil)
+            nil
+          else
+            path = []
+            evaluate_selections(path, object_proxy, root_type, root_operation.selections, root_operation_type: root_op_type)
+            nil
+          end
         end
 
         def gather_selections(owner_object, owner_type, selections, selections_by_name)
@@ -192,17 +198,26 @@ module GraphQL
               field_ast_nodes.each { |f| next_selections.concat(f.selections) }
             end
 
-            resolve_with_directives(object, ast_node) do
+            field_result = resolve_with_directives(object, ast_node) do
               # Actually call the field resolver and capture the result
-              app_result = query.trace("execute_field", {field: field_defn, path: next_path}) do
+              app_result = query.trace("execute_field", {owner: owner_type, field: field_defn, path: next_path}) do
                 field_defn.resolve(object, kwarg_arguments, context)
               end
-              after_lazy(app_result, field: field_defn, path: next_path, eager: root_operation_type == "mutation") do |inner_result|
+              after_lazy(app_result, owner: owner_type, field: field_defn, path: next_path) do |inner_result|
                 continue_value = continue_value(next_path, inner_result, field_defn, return_type.non_null?, ast_node)
                 if HALT != continue_value
                   continue_field(next_path, continue_value, field_defn, return_type, ast_node, next_selections, false)
                 end
               end
+            end
+
+            # If this field is a root mutation field, immediately resolve
+            # all of its child fields before moving on to the next root mutation field.
+            # (Subselections of this mutation will still be resolved level-by-level.)
+            if root_operation_type == "mutation"
+              Interpreter::Resolve.resolve_all([field_result])
+            else
+              field_result
             end
           end
         end
@@ -261,18 +276,20 @@ module GraphQL
             write_in_response(path, r)
             r
           when "UNION", "INTERFACE"
-            resolved_type = query.resolve_type(type, value)
-            possible_types = query.possible_types(type)
+            resolved_type_or_lazy = query.resolve_type(type, value)
+            after_lazy(resolved_type_or_lazy, owner: type, path: path, field: field) do |resolved_type|
+              possible_types = query.possible_types(type)
 
-            if !possible_types.include?(resolved_type)
-              parent_type = field.owner
-              type_error = GraphQL::UnresolvedTypeError.new(value, field, parent_type, resolved_type, possible_types)
-              schema.type_error(type_error, context)
-              write_in_response(path, nil)
-              nil
-            else
-              resolved_type = resolved_type.metadata[:type_class]
-              continue_field(path, value, field, resolved_type, ast_node, next_selections, is_non_null)
+              if !possible_types.include?(resolved_type)
+                parent_type = field.owner
+                type_error = GraphQL::UnresolvedTypeError.new(value, field, parent_type, resolved_type, possible_types)
+                schema.type_error(type_error, context)
+                write_in_response(path, nil)
+                nil
+              else
+                resolved_type = resolved_type.metadata[:type_class]
+                continue_field(path, value, field, resolved_type, ast_node, next_selections, is_non_null)
+              end
             end
           when "OBJECT"
             object_proxy = begin
@@ -280,7 +297,7 @@ module GraphQL
             rescue GraphQL::ExecutionError => err
               err
             end
-            after_lazy(object_proxy, path: path, field: field) do |inner_object|
+            after_lazy(object_proxy, owner: type, path: path, field: field) do |inner_object|
               continue_value = continue_value(path, inner_object, field, is_non_null, ast_node)
               if HALT != continue_value
                 response_hash = {}
@@ -301,7 +318,7 @@ module GraphQL
               idx += 1
               set_type_at_path(next_path, inner_type)
               # This will update `response_list` with the lazy
-              after_lazy(inner_value, path: next_path, field: field) do |inner_inner_value|
+              after_lazy(inner_value, owner: inner_type, path: next_path, field: field) do |inner_inner_value|
                 # reset `is_non_null` here and below, because the inner type will have its own nullability constraint
                 continue_value = continue_value(next_path, inner_inner_value, field, false, ast_node)
                 if HALT != continue_value
@@ -367,7 +384,7 @@ module GraphQL
         # @param field [GraphQL::Schema::Field]
         # @param eager [Boolean] Set to `true` for mutation root fields only
         # @return [GraphQL::Execution::Lazy, Object] If loading `object` will be deferred, it's a wrapper over it.
-        def after_lazy(obj, field:, path:, eager: false)
+        def after_lazy(obj, owner:, field:, path:, eager: false)
           @interpreter_context[:current_path] = path
           @interpreter_context[:current_field] = field
           if schema.lazy?(obj)
@@ -376,14 +393,14 @@ module GraphQL
               @interpreter_context[:current_field] = field
               # Wrap the execution of _this_ method with tracing,
               # but don't wrap the continuation below
-              inner_obj = query.trace("execute_field_lazy", {field: field, path: path}) do
+              inner_obj = query.trace("execute_field_lazy", {owner: owner, field: field, path: path}) do
                 begin
                   schema.sync_lazy(obj)
                 rescue GraphQL::ExecutionError, GraphQL::UnauthorizedError => err
                   yield(err)
                 end
               end
-              after_lazy(inner_obj, field: field, path: path, eager: eager) do |really_inner_obj|
+              after_lazy(inner_obj, owner: owner, field: field, path: path, eager: eager) do |really_inner_obj|
                 yield(really_inner_obj)
               end
             end
