@@ -6,7 +6,6 @@ section: Type Definitions
 title: Interfaces
 desc: Interfaces are lists of fields which objects may implement
 index: 4
-class_based_api: true
 redirect_from:
   - /types/abstract_types/
 ---
@@ -107,13 +106,13 @@ To define types that implement this interface use the `implements` method:
 
 ```ruby
 class Types::Car < Types::BaseObject
-  implements Types::RetailObject
+  implements Types::RetailItem
 
   # ... additional fields
 end
 
 class Types::Purse < Types::BaseObject
-  implements Types::RetailObject
+  implements Types::RetailItem
 
   # ... additional fields
 end

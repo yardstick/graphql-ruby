@@ -50,12 +50,16 @@ module GraphQL
             operation = query.selected_operation
             op_type = operation.operation_type
             root_type = query.root_type_for_operation(op_type)
-            resolve_selection(
-              query.root_value,
-              root_type,
-              query.context,
-              mutation: query.mutation?
-            )
+            if query.context[:__root_unauthorized]
+              # This was set by member/instrumentation.rb so that we wouldn't continue.
+            else
+              resolve_selection(
+                query.root_value,
+                root_type,
+                query.context,
+                mutation: query.mutation?
+              )
+            end
           end
         end
 
@@ -124,6 +128,9 @@ module GraphQL
               field_ctx.trace("execute_field", { context: field_ctx }) do
                 field_ctx.schema.middleware.invoke([parent_type, object, field, arguments, field_ctx])
               end
+            rescue GraphQL::UnauthorizedFieldError => err
+              err.field ||= field
+              field_ctx.schema.unauthorized_field(err)
             rescue GraphQL::UnauthorizedError => err
               field_ctx.schema.unauthorized_object(err)
             end
