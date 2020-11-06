@@ -4,24 +4,22 @@ require "graphql/schema/build_from_definition/resolve_map"
 module GraphQL
   class Schema
     module BuildFromDefinition
-      class << self
-        def from_definition(definition_string, default_resolve:, parser: DefaultParser)
-          document = parser.parse(definition_string)
-          Builder.build(document, default_resolve: default_resolve)
-        end
+      if !String.method_defined?(:-@)
+        using GraphQL::StringDedupBackport
       end
 
-      # @api private
-      DefaultParser = GraphQL::Language::Parser
+      class << self
+        # @see {Schema.from_definition}
+        def from_definition(definition_string, parser: GraphQL.default_parser, **kwargs)
+          from_document(parser.parse(definition_string), **kwargs)
+        end
 
-      # @api private
-      module DefaultResolve
-        def self.call(type, field, obj, args, ctx)
-          if field.arguments.any?
-            obj.public_send(field.name, args, ctx)
-          else
-            obj.public_send(field.name)
-          end
+        def from_definition_path(definition_path, parser: GraphQL.default_parser, **kwargs)
+          from_document(parser.parse_file(definition_path), **kwargs)
+        end
+
+        def from_document(document, default_resolve:, using: {}, relay: false, interpreter: true)
+          Builder.build(document, default_resolve: default_resolve || {}, relay: relay, using: using, interpreter: interpreter)
         end
       end
 
@@ -29,28 +27,30 @@ module GraphQL
       module Builder
         extend self
 
-        def build(document, default_resolve: DefaultResolve)
+        def build(document, default_resolve:, using: {}, interpreter: true, relay:)
           raise InvalidDocumentError.new('Must provide a document ast.') if !document || !document.is_a?(GraphQL::Language::Nodes::Document)
 
           if default_resolve.is_a?(Hash)
             default_resolve = ResolveMap.new(default_resolve)
           end
 
-          schema_definition = nil
+          schema_defns = document.definitions.select { |d| d.is_a?(GraphQL::Language::Nodes::SchemaDefinition) }
+          if schema_defns.size > 1
+            raise InvalidDocumentError.new('Must provide only one schema definition.')
+          end
+          schema_definition = schema_defns.first
           types = {}
-          types.merge!(GraphQL::Schema::BUILT_IN_TYPES)
           directives = {}
-          type_resolver = ->(type) { -> { resolve_type(types, type) } }
+          type_resolver = ->(type) { resolve_type(types, type)  }
 
           document.definitions.each do |definition|
             case definition
             when GraphQL::Language::Nodes::SchemaDefinition
-              raise InvalidDocumentError.new('Must provide only one schema definition.') if schema_definition
-              schema_definition = definition
+              nil # already handled
             when GraphQL::Language::Nodes::EnumTypeDefinition
               types[definition.name] = build_enum_type(definition, type_resolver)
             when GraphQL::Language::Nodes::ObjectTypeDefinition
-              types[definition.name] = build_object_type(definition, type_resolver, default_resolve: default_resolve)
+              types[definition.name] = build_object_type(definition, type_resolver)
             when GraphQL::Language::Nodes::InterfaceTypeDefinition
               types[definition.name] = build_interface_type(definition, type_resolver)
             when GraphQL::Language::Nodes::UnionTypeDefinition
@@ -61,6 +61,21 @@ module GraphQL
               types[definition.name] = build_input_object_type(definition, type_resolver)
             when GraphQL::Language::Nodes::DirectiveDefinition
               directives[definition.name] = build_directive(definition, type_resolver)
+            end
+          end
+
+          # At this point, if types named by the built in types are _late-bound_ types,
+          # that means they were referenced in the schema but not defined in the schema.
+          # That's supported for built-in types. (Eg, you can use `String` without defining it.)
+          # In that case, insert the concrete type definition now.
+          #
+          # However, if the type in `types` is a _concrete_ type definition, that means that
+          # the document contained an explicit definition of the scalar type.
+          # Don't override it in this case.
+          GraphQL::Schema::BUILT_IN_TYPES.each do |scalar_name, built_in_scalar|
+            existing_type = types[scalar_name]
+            if existing_type.is_a?(GraphQL::Schema::LateBoundType)
+              types[scalar_name] = built_in_scalar
             end
           end
 
@@ -89,54 +104,86 @@ module GraphQL
 
           raise InvalidDocumentError.new('Must provide schema definition with query type or a type named Query.') unless query_root_type
 
-          schema = Schema.define do
-            raise_definition_error true
+          Class.new(GraphQL::Schema) do
+            begin
+              # Add these first so that there's some chance of resolving late-bound types
+              orphan_types types.values
+              query query_root_type
+              mutation mutation_root_type
+              subscription subscription_root_type
+            rescue Schema::UnresolvedLateBoundTypeError  => err
+              type_name = err.type.name
+              err_backtrace =  err.backtrace
+              raise InvalidDocumentError, "Type \"#{type_name}\" not found in document.", err_backtrace
+            end
 
-            query query_root_type
-            mutation mutation_root_type
-            subscription subscription_root_type
-            orphan_types types.values
             if default_resolve.respond_to?(:resolve_type)
-              resolve_type(default_resolve.method(:resolve_type))
+              def self.resolve_type(*args)
+                self.definition_default_resolve.resolve_type(*args)
+              end
             else
-              resolve_type(NullResolveType)
+              def self.resolve_type(*args)
+                NullResolveType.call(*args)
+              end
             end
 
             directives directives.values
+
+            if schema_definition
+              ast_node(schema_definition)
+            end
+
+            if interpreter
+              use GraphQL::Execution::Interpreter
+              use GraphQL::Analysis::AST
+            end
+
+            using.each do |plugin, options|
+              if options
+                use(plugin, **options)
+              else
+                use(plugin)
+              end
+            end
+
+            # Empty `orphan_types` -- this will make unreachable types ... unreachable.
+            own_orphan_types.clear
+
+            class << self
+              attr_accessor :definition_default_resolve
+            end
+
+            self.definition_default_resolve = default_resolve
+
+            def definition_default_resolve
+              self.class.definition_default_resolve
+            end
+
+            def self.inherited(child_class)
+              child_class.definition_default_resolve = self.definition_default_resolve
+            end
           end
-
-          schema.ast_node = schema_definition if schema_definition
-
-          schema
         end
 
         NullResolveType = ->(type, obj, ctx) {
-          raise(NotImplementedError, "Generated Schema cannot use Interface or Union types for execution. Implement resolve_type on your resolver.")
+          raise(GraphQL::RequiredImplementationMissingError, "Generated Schema cannot use Interface or Union types for execution. Implement resolve_type on your resolver.")
         }
 
-        NullScalarCoerce = ->(val, _ctx) { val }
-
         def build_enum_type(enum_type_definition, type_resolver)
-          enum = GraphQL::EnumType.define(
-            name: enum_type_definition.name,
-            description: enum_type_definition.description,
-            values: enum_type_definition.values.map do |enum_value_definition|
-              value = EnumType::EnumValue.define(
-                name: enum_value_definition.name,
+          builder = self
+          Class.new(GraphQL::Schema::Enum) do
+            graphql_name(enum_type_definition.name)
+            description(enum_type_definition.description)
+            ast_node(enum_type_definition)
+            enum_type_definition.values.each do |enum_value_definition|
+              value(enum_value_definition.name,
                 value: enum_value_definition.name,
-                deprecation_reason: build_deprecation_reason(enum_value_definition.directives),
+                deprecation_reason: builder.build_deprecation_reason(enum_value_definition.directives),
                 description: enum_value_definition.description,
+                ast_node: enum_value_definition,
               )
-
-              value.ast_node = enum_value_definition
-
-              value
             end
-          )
-
-          enum.ast_node = enum_type_definition
-
-          enum
+          end
         end
 
         def build_deprecation_reason(directives)
@@ -144,65 +191,67 @@ module GraphQL
           return unless deprecated_directive
 
           reason = deprecated_directive.arguments.find{ |a| a.name == 'reason' }
-          return GraphQL::Directive::DEFAULT_DEPRECATION_REASON unless reason
+          return GraphQL::Schema::Directive::DEFAULT_DEPRECATION_REASON unless reason
 
           reason.value
         end
 
         def build_scalar_type(scalar_type_definition, type_resolver, default_resolve:)
-          scalar_type = GraphQL::ScalarType.define(
-            name: scalar_type_definition.name,
-            description: scalar_type_definition.description,
-            coerce: NullScalarCoerce,
-          )
+          builder = self
+          Class.new(GraphQL::Schema::Scalar) do
+            graphql_name(scalar_type_definition.name)
+            description(scalar_type_definition.description)
+            ast_node(scalar_type_definition)
 
-          scalar_type.ast_node = scalar_type_definition
-
-          if default_resolve.respond_to?(:coerce_input)
-            scalar_type = scalar_type.redefine(
-              coerce_input: ->(val, ctx) { default_resolve.coerce_input(scalar_type, val, ctx) },
-              coerce_result: ->(val, ctx) { default_resolve.coerce_result(scalar_type, val, ctx) },
-            )
+            if default_resolve.respond_to?(:coerce_input)
+              # Put these method definitions in another method to avoid retaining `type_resolve`
+              # from this method's bindiing
+              builder.build_scalar_type_coerce_method(self, :coerce_input, default_resolve)
+              builder.build_scalar_type_coerce_method(self, :coerce_result, default_resolve)
+            end
           end
+        end
 
-          scalar_type
+        def build_scalar_type_coerce_method(scalar_class, method_name, default_definition_resolve)
+          scalar_class.define_singleton_method(method_name) do |val, ctx|
+            default_definition_resolve.public_send(method_name, self, val, ctx)
+          end
         end
 
         def build_union_type(union_type_definition, type_resolver)
-          union = GraphQL::UnionType.define(
-            name: union_type_definition.name,
-            description: union_type_definition.description,
-            possible_types: union_type_definition.types.map{ |type_name| type_resolver.call(type_name) },
-          )
-
-          union.ast_node = union_type_definition
-
-          union
+          Class.new(GraphQL::Schema::Union) do
+            graphql_name(union_type_definition.name)
+            description(union_type_definition.description)
+            possible_types(*union_type_definition.types.map { |type_name| type_resolver.call(type_name) })
+            ast_node(union_type_definition)
+          end
         end
 
-        def build_object_type(object_type_definition, type_resolver, default_resolve:)
-          type_def = nil
-          typed_resolve_fn = ->(field, obj, args, ctx) { default_resolve.call(type_def, field, obj, args, ctx) }
-          type_def = GraphQL::ObjectType.define(
-            name: object_type_definition.name,
-            description: object_type_definition.description,
-            fields: Hash[build_fields(object_type_definition.fields, type_resolver, default_resolve: typed_resolve_fn)],
-            interfaces: object_type_definition.interfaces.map{ |interface_name| type_resolver.call(interface_name) },
-          )
-          type_def.ast_node = object_type_definition
-          type_def
+        def build_object_type(object_type_definition, type_resolver)
+          builder = self
+
+          Class.new(GraphQL::Schema::Object) do
+            graphql_name(object_type_definition.name)
+            description(object_type_definition.description)
+            ast_node(object_type_definition)
+
+            object_type_definition.interfaces.each do |interface_name|
+              interface_defn = type_resolver.call(interface_name)
+              implements(interface_defn)
+            end
+
+            builder.build_fields(self, object_type_definition.fields, type_resolver, default_resolve: true)
+          end
         end
 
         def build_input_object_type(input_object_type_definition, type_resolver)
-          input = GraphQL::InputObjectType.define(
-            name: input_object_type_definition.name,
-            description: input_object_type_definition.description,
-            arguments: Hash[build_input_arguments(input_object_type_definition, type_resolver)],
-          )
-
-          input.ast_node = input_object_type_definition
-
-          input
+          builder = self
+          Class.new(GraphQL::Schema::InputObject) do
+            graphql_name(input_object_type_definition.name)
+            description(input_object_type_definition.description)
+            ast_node(input_object_type_definition)
+            builder.build_arguments(self, input_object_type_definition.fields, type_resolver)
+          end
         end
 
         def build_default_value(default_value)
@@ -220,126 +269,102 @@ module GraphQL
           end
         end
 
-        def build_input_arguments(input_object_type_definition, type_resolver)
-          input_object_type_definition.fields.map do |input_argument|
-            kwargs = {}
+        NO_DEFAULT_VALUE = {}.freeze
 
-            if !input_argument.default_value.nil?
-              kwargs[:default_value] = build_default_value(input_argument.default_value)
+        def build_arguments(type_class, arguments, type_resolver)
+          builder = self
+
+          arguments.each do |argument_defn|
+            default_value_kwargs = if !argument_defn.default_value.nil?
+              { default_value: builder.build_default_value(argument_defn.default_value) }
+            else
+              NO_DEFAULT_VALUE
             end
 
-            argument = GraphQL::Argument.define(
-              name: input_argument.name,
-              type: type_resolver.call(input_argument.type),
-              description: input_argument.description,
-              **kwargs,
+            type_class.argument(
+              argument_defn.name,
+              type: type_resolver.call(argument_defn.type),
+              required: false,
+              description: argument_defn.description,
+              deprecation_reason: builder.build_deprecation_reason(argument_defn.directives),
+              ast_node: argument_defn,
+              camelize: false,
+              method_access: false,
+              **default_value_kwargs
             )
-
-            argument.ast_node = input_argument
-
-            [
-              input_argument.name,
-              argument
-            ]
           end
         end
 
         def build_directive(directive_definition, type_resolver)
-          directive = GraphQL::Directive.define(
-            name: directive_definition.name,
-            description: directive_definition.description,
-            arguments: Hash[build_directive_arguments(directive_definition, type_resolver)],
-            locations: directive_definition.locations.map { |location| location.name.to_sym },
-          )
-
-          directive.ast_node = directive_definition
-
-          directive
-        end
-
-        def build_directive_arguments(directive_definition, type_resolver)
-          directive_definition.arguments.map do |directive_argument|
-            kwargs = {}
-
-            if !directive_argument.default_value.nil?
-              kwargs[:default_value] = build_default_value(directive_argument.default_value)
-            end
-
-            argument = GraphQL::Argument.define(
-              name: directive_argument.name,
-              type: type_resolver.call(directive_argument.type),
-              description: directive_argument.description,
-              **kwargs,
-            )
-
-            argument.ast_node = directive_argument
-
-            [
-              directive_argument.name,
-              argument
-            ]
+          builder = self
+          Class.new(GraphQL::Schema::Directive) do
+            graphql_name(directive_definition.name)
+            description(directive_definition.description)
+            locations(*directive_definition.locations.map { |location| location.name.to_sym })
+            ast_node(directive_definition)
+            builder.build_arguments(self, directive_definition.arguments, type_resolver)
           end
         end
 
         def build_interface_type(interface_type_definition, type_resolver)
-          interface = GraphQL::InterfaceType.define(
-            name: interface_type_definition.name,
-            description: interface_type_definition.description,
-            fields: Hash[build_fields(interface_type_definition.fields, type_resolver, default_resolve: nil)],
-          )
+          builder = self
+          Module.new do
+            include GraphQL::Schema::Interface
+            graphql_name(interface_type_definition.name)
+            description(interface_type_definition.description)
+            ast_node(interface_type_definition)
 
-          interface.ast_node = interface_type_definition
-
-          interface
+            builder.build_fields(self, interface_type_definition.fields, type_resolver, default_resolve: nil)
+          end
         end
 
-        def build_fields(field_definitions, type_resolver, default_resolve:)
-          field_definitions.map do |field_definition|
-            field_arguments = Hash[field_definition.arguments.map do |argument|
-              kwargs = {}
+        def build_fields(owner, field_definitions, type_resolver, default_resolve:)
+          builder = self
 
-              if !argument.default_value.nil?
-                kwargs[:default_value] = build_default_value(argument.default_value)
-              end
-
-              arg = GraphQL::Argument.define(
-                name: argument.name,
-                description: argument.description,
-                type: type_resolver.call(argument.type),
-                **kwargs,
-              )
-
-              arg.ast_node = argument
-
-              [argument.name, arg]
-            end]
-
-            field = GraphQL::Field.define(
-              name: field_definition.name,
+          field_definitions.each do |field_definition|
+            type_name = resolve_type_name(field_definition.type)
+            resolve_method_name = -"resolve_field_#{field_definition.name}"
+            schema_field_defn = owner.field(
+              field_definition.name,
               description: field_definition.description,
               type: type_resolver.call(field_definition.type),
-              arguments: field_arguments,
-              resolve: ->(obj, args, ctx) { default_resolve.call(field, obj, args, ctx) },
+              null: true,
+              connection: type_name.end_with?("Connection"),
+              connection_extension: nil,
               deprecation_reason: build_deprecation_reason(field_definition.directives),
+              ast_node: field_definition,
+              method_conflict_warning: false,
+              camelize: false,
+              resolver_method: resolve_method_name,
             )
 
-            field.ast_node = field_definition
+            builder.build_arguments(schema_field_defn, field_definition.arguments, type_resolver)
 
-            type_name = resolve_type_name(field_definition.type)
-            field.connection = type_name.end_with?("Connection")
-            [field_definition.name, field]
+            # Don't do this for interfaces
+            if default_resolve
+              owner.class_eval <<-RUBY, __FILE__, __LINE__
+                # frozen_string_literal: true
+                def #{resolve_method_name}(**args)
+                  field_instance = self.class.get_field("#{field_definition.name}")
+                  context.schema.definition_default_resolve.call(self.class, field_instance, object, args, context)
+                end
+              RUBY
+            end
           end
         end
 
         def resolve_type(types, ast_node)
-          type = GraphQL::Schema::TypeExpression.build_type(types, ast_node)
-          if type.nil?
-            while ast_node.respond_to?(:of_type)
-              ast_node = ast_node.of_type
-            end
-            raise InvalidDocumentError.new("Type \"#{ast_node.name}\" not found in document.")
+          case ast_node
+          when GraphQL::Language::Nodes::TypeName
+            type_name = ast_node.name
+            types[type_name] ||= GraphQL::Schema::LateBoundType.new(type_name)
+          when GraphQL::Language::Nodes::NonNullType
+            resolve_type(types, ast_node.of_type).to_non_null_type
+          when GraphQL::Language::Nodes::ListType
+            resolve_type(types, ast_node.of_type).to_list_type
+          else
+            raise "Unexpected ast_node: #{ast_node.inspect}"
           end
-          type
         end
 
         def resolve_type_name(type)

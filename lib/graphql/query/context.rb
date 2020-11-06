@@ -34,7 +34,7 @@ module GraphQL
         # Remove this child from the result value
         # (used for null propagation and skip)
         # @api private
-        def delete(child_ctx)
+        def delete_child(child_ctx)
           @value.delete(child_ctx.key)
         end
 
@@ -143,9 +143,9 @@ module GraphQL
       # Make a new context which delegates key lookup to `values`
       # @param query [GraphQL::Query] the query who owns this context
       # @param values [Hash] A hash of arbitrary values which will be accessible at query-time
-      def initialize(query:, values: , object:)
+      def initialize(query:, schema: query.schema, values:, object:)
         @query = query
-        @schema = query.schema
+        @schema = schema
         @provided_values = values || {}
         @object = object
         # Namespaced storage, where user-provided values are in `nil` namespace:
@@ -155,6 +155,7 @@ module GraphQL
         @path = []
         @value = nil
         @context = self # for SharedMethods
+        @scoped_context = {}
       end
 
       # @api private
@@ -163,15 +164,57 @@ module GraphQL
       # @api private
       attr_writer :value
 
-      def_delegators :@provided_values, :[], :[]=, :to_h, :to_hash, :key?, :fetch, :dig
-      def_delegators :@query, :trace, :interpreter?
+      # @api private
+      attr_accessor :scoped_context
 
-      # @!method [](key)
-      #   Lookup `key` from the hash passed to {Schema#execute} as `context:`
+      def_delegators :@provided_values, :[]=
+      def_delegators :@query, :trace, :interpreter?
 
       # @!method []=(key, value)
       #   Reassign `key` to the hash passed to {Schema#execute} as `context:`
 
+      # Lookup `key` from the hash passed to {Schema#execute} as `context:`
+      def [](key)
+        return @scoped_context[key] if @scoped_context.key?(key)
+        @provided_values[key]
+      end
+
+      def delete(key)
+        if @scoped_context.key?(key)
+          @scoped_context.delete(key)
+        else
+          @provided_values.delete(key)
+        end
+      end
+
+      UNSPECIFIED_FETCH_DEFAULT = Object.new
+
+      def fetch(key, default = UNSPECIFIED_FETCH_DEFAULT)
+        if @scoped_context.key?(key)
+          @scoped_context[key]
+        elsif @provided_values.key?(key)
+          @provided_values[key]
+        elsif default != UNSPECIFIED_FETCH_DEFAULT
+          default
+        elsif block_given?
+          yield(self, key)
+        else
+          raise KeyError.new(key: key)
+        end
+      end
+
+      def dig(key, *other_keys)
+        @scoped_context.key?(key) ? @scoped_context.dig(key, *other_keys) : @provided_values.dig(key, *other_keys)
+      end
+
+      def to_h
+        @provided_values.merge(@scoped_context)
+      end
+      alias :to_hash :to_h
+
+      def key?(key)
+        @scoped_context.key?(key) || @provided_values.key?(key)
+      end
 
       # @return [GraphQL::Schema::Warden]
       def warden
@@ -193,6 +236,15 @@ module GraphQL
       def received_null_child
         @invalid_null = true
         @value = nil
+      end
+
+      def scoped_merge!(hash)
+        @scoped_context = @scoped_context.merge(hash)
+      end
+
+      def scoped_set!(key, value)
+        scoped_merge!(key => value)
+        nil
       end
 
       class FieldResolutionContext
@@ -268,7 +320,7 @@ module GraphQL
             end
           when GraphQL::Execution::Execute::SKIP
             @parent.skipped = true
-            @parent.delete(self)
+            @parent.delete_child(self)
           else
             @value = new_value
           end
@@ -309,6 +361,3 @@ module GraphQL
     end
   end
 end
-
-
-GraphQL::Schema::Context = GraphQL::Query::Context

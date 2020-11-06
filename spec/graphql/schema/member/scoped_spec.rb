@@ -12,6 +12,13 @@ describe GraphQL::Schema::Member::Scoped do
           items.select { |i| i.name == "Trombone" }
         elsif context[:english]
           items.select { |i| i.name == "Paperclip" }
+        elsif context[:lazy]
+          # return everything, but make the runtime wait for it,
+          # and add a flag for confirming it was called
+          ->() {
+            context[:proc_called] = true
+            items
+          }
         else
           # boot everything
           items.reject { true }
@@ -83,6 +90,12 @@ describe GraphQL::Schema::Member::Scoped do
         ]
       end
 
+      field :lazy_items, [Item], null: false
+      field :lazy_items_connection, Item.connection_type, null: false, resolver_method: :lazy_items
+      def lazy_items
+        ->() { items }
+      end
+
       if TESTING_INTERPRETER
         field :things, [Thing], null: false
         def things
@@ -103,7 +116,9 @@ describe GraphQL::Schema::Member::Scoped do
     query(Query)
     if TESTING_INTERPRETER
       use GraphQL::Execution::Interpreter
+      use GraphQL::Analysis::AST
     end
+    lazy_resolve(Proc, :call)
   end
 
   describe ".scope_items(items, ctx)" do
@@ -176,6 +191,47 @@ describe GraphQL::Schema::Member::Scoped do
       assert_equal ["Paperclip"], names
     end
 
+    it "works for lazy connection values" do
+      ctx = { lazy: true }
+      query_str = "
+      {
+        itemsConnection {
+          edges {
+            node {
+              name
+            }
+          }
+        }
+      }
+      "
+      res = ScopeSchema.execute(query_str, context: ctx)
+      names = res["data"]["itemsConnection"]["edges"].map { |e| e["node"]["name"] }
+      assert_equal ["Trombone", "Paperclip"], names
+      assert_equal true, ctx[:proc_called]
+    end
+
+    it "works for lazy returned list values" do
+      query_str = "
+      {
+        lazyItemsConnection {
+          edges {
+            node {
+              name
+            }
+          }
+        }
+        lazyItems {
+          name
+        }
+      }
+      "
+      res = ScopeSchema.execute(query_str, context: { french: true })
+      names = res["data"]["lazyItemsConnection"]["edges"].map { |e| e["node"]["name"] }
+      assert_equal ["Trombone"], names
+      names2 = res["data"]["lazyItems"].map { |e| e["name"] }
+      assert_equal ["Trombone"], names2
+    end
+
     it "is called for abstract types" do
       query_str = "
       {
@@ -192,6 +248,12 @@ describe GraphQL::Schema::Member::Scoped do
       res = ScopeSchema.execute(query_str, context: {first_letter: "T"})
       things = res["data"]["things"]
       assert_equal [{ "name" => "Trombone" }, {"designation" => "Turbine"}], things
+    end
+
+    it "works with lazy values" do
+      ctx = {lazy: true}
+      assert_equal ["Trombone", "Paperclip"], get_item_names_with_context(ctx)
+      assert_equal true, ctx[:proc_called]
     end
   end
 

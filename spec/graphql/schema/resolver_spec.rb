@@ -4,8 +4,8 @@ require "spec_helper"
 describe GraphQL::Schema::Resolver do
   module ResolverTest
     class LazyBlock
-      def initialize
-        @get_value = Proc.new
+      def initialize(&block)
+        @get_value = block
       end
 
       def value
@@ -20,7 +20,7 @@ describe GraphQL::Schema::Resolver do
       argument :value, Integer, required: false
       type [Integer, null: true], null: false
 
-      def initialize(object:, context:)
+      def initialize(object:, context:, field:)
         super
         if defined?(@value)
           raise "The instance should start fresh"
@@ -38,7 +38,7 @@ describe GraphQL::Schema::Resolver do
       argument :extra_value, Integer, required: true
 
       def resolve(extra_value:, **_rest)
-        value = super(_rest)
+        value = super(**_rest)
         value << extra_value
         value
       end
@@ -81,6 +81,23 @@ describe GraphQL::Schema::Resolver do
     end
 
     class Resolver8 < Resolver7
+    end
+
+    class GreetingExtension < GraphQL::Schema::FieldExtension
+      def resolve(object:, arguments:, **rest)
+        name = yield(object, arguments)
+        "#{options[:greeting]}, #{name}!"
+      end
+    end
+
+    class ResolverWithExtension < BaseResolver
+      type String, null: false
+
+      extension GreetingExtension, greeting: "Hi"
+
+      def resolve
+        "Robert"
+      end
     end
 
     class PrepResolver1 < BaseResolver
@@ -186,12 +203,20 @@ describe GraphQL::Schema::Resolver do
     class IntegerWrapper < GraphQL::Schema::Object
       implements HasValue
       field :value, Integer, null: false, method: :itself
+
+      def self.authorized?(value, ctx)
+        if ctx[:max_value] && value > ctx[:max_value]
+          false
+        else
+          true
+        end
+      end
     end
 
     class PrepResolver9 < BaseResolver
       argument :int_id, ID, required: true, loads: HasValue
       # Make sure the lazy object is resolved properly:
-      type HasValue, null: false
+      type HasValue, null: true
       def object_from_id(type, id, ctx)
         # Make sure a lazy object is handled appropriately
         LazyBlock.new {
@@ -308,6 +333,25 @@ describe GraphQL::Schema::Resolver do
       end
     end
 
+    class ResolverWithAuthArgs < GraphQL::Schema::RelayClassicMutation
+      argument :number_s, String, required: true, prepare: ->(v, ctx) { v.to_i }
+      argument :loads_id, ID, required: true, loads: IntegerWrapper
+
+      field :result, Integer, null: false
+
+      def authorized?(**_args)
+        if arguments[:number_s] == 1 && arguments[:loads] == 1
+          true
+        else
+          raise GraphQL::ExecutionError, "Auth failed (#{arguments[:number_s].inspect})"
+        end
+      end
+
+      def resolve(number_s:, loads:)
+        { result: number_s + loads }
+      end
+    end
+
     class MutationWithNullableLoadsArgument < GraphQL::Schema::Mutation
       argument :label_id, ID, required: false, loads: HasValue
       argument :label_ids, [ID], required: false, loads: HasValue
@@ -368,6 +412,7 @@ describe GraphQL::Schema::Resolver do
       field :resolver_6, resolver: Resolver6
       field :resolver_7, resolver: Resolver7
       field :resolver_8, resolver: Resolver8
+      field :resolver_with_extension, resolver: ResolverWithExtension
       field :resolver_with_path, resolver: ResolverWithPath
 
       field :prep_resolver_1, resolver: PrepResolver1
@@ -384,6 +429,7 @@ describe GraphQL::Schema::Resolver do
       field :prep_resolver_12, resolver: PrepResolver12
       field :prep_resolver_13, resolver: PrepResolver13
       field :prep_resolver_14, resolver: PrepResolver14
+      field :resolver_with_auth_args, resolver: ResolverWithAuthArgs
       field :resolver_with_error_handler, resolver: ResolverWithErrorHandler
     end
 
@@ -394,9 +440,10 @@ describe GraphQL::Schema::Resolver do
       orphan_types IntegerWrapper
       if TESTING_INTERPRETER
         use GraphQL::Execution::Interpreter
+        use GraphQL::Analysis::AST
       end
 
-      def object_from_id(id, ctx)
+      def self.object_from_id(id, ctx)
         if id == "invalid"
           nil
         else
@@ -406,8 +453,17 @@ describe GraphQL::Schema::Resolver do
     end
   end
 
-  def exec_query(*args)
-    ResolverTest::Schema.execute(*args)
+  def exec_query(*args, **kwargs)
+    ResolverTest::Schema.execute(*args, **kwargs)
+  end
+
+  it "can access self.arguments inside authorized?" do
+    res = exec_query("{ resolverWithAuthArgs(input: { numberS: \"1\", loadsId: 1 }) { result } }")
+    assert_equal 2, res["data"]["resolverWithAuthArgs"]["result"]
+
+    # Test auth failure:
+    res = exec_query("{ resolverWithAuthArgs(input: { numberS: \"2\", loadsId: 1 }) { result } }")
+    assert_equal ["Auth failed (2)"], res["errors"].map { |e| e["message"] }
   end
 
   describe ".path" do
@@ -421,7 +477,7 @@ describe GraphQL::Schema::Resolver do
     end
 
     it "works on instances" do
-      r = ResolverTest::Resolver1.new(object: nil, context: nil)
+      r = ResolverTest::Resolver1.new(object: nil, context: nil, field: nil)
       assert_equal "Resolver1", r.path
     end
   end
@@ -555,6 +611,11 @@ describe GraphQL::Schema::Resolver do
       refute res.key?("errors"), "#{description}: silent auth failure (no top-level error)"
     end
 
+    it "keeps track of the `loads:` option" do
+      arg = ResolverTest::MutationWithNullableLoadsArgument.arguments["labelId"]
+      assert_equal ResolverTest::HasValue, arg.loads
+    end
+
     describe "ready?" do
       it "can raise errors" do
         res = exec_query("{ int: prepResolver5(int: 5) }")
@@ -657,6 +718,22 @@ describe GraphQL::Schema::Resolver do
           res = exec_query("{ prepResolver14(input: {}) { number } }")
           assert_equal 1, res["data"]["prepResolver14"]["number"]
         end
+
+        it "uses loaded objects" do
+          query_str = "{ prepResolver9(intId: 9) { value } }"
+          # This will cause an unauthorized response
+          # by `HasValue.authorized?`
+          context = { max_value: 8 }
+          res = exec_query(query_str, context: context)
+          assert_nil res["data"]["prepResolver9"]
+          # This is OK
+          context = { max_value: 900 }
+          res = exec_query(query_str, context: context)
+          assert_equal 51, res["data"]["prepResolver9"]["value"]
+          # This is the transformation applied by the resolver,
+          # just make sure it matches the response
+          assert_equal 51, (9 + "HasValue".size) * 3
+        end
       end
     end
 
@@ -708,6 +785,22 @@ describe GraphQL::Schema::Resolver do
 
         assert res["errors"]
         assert_equal 'No object found for `labelId: "invalid"`', res["errors"][0]["message"]
+      end
+    end
+
+    describe "extensions" do
+      it "returns extension whe no arguments passed" do
+        assert 1, ResolverTest::ResolverWithExtension.extensions.count
+      end
+
+      it "configures extensions for field" do
+        assert_kind_of ResolverTest::GreetingExtension,
+                       ResolverTest::Query.fields["resolverWithExtension"].extensions.first
+      end
+
+      it "uses extension to build response" do
+        res = exec_query " { resolverWithExtension } "
+        assert_equal "Hi, Robert!", res["data"]["resolverWithExtension"]
       end
     end
   end

@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 require "spec_helper"
-
 describe GraphQL::Schema::Object do
   describe "class attributes" do
     let(:object_class) { Jazz::Ensemble }
@@ -8,8 +7,21 @@ describe GraphQL::Schema::Object do
     it "tells type data" do
       assert_equal "Ensemble", object_class.graphql_name
       assert_equal "A group of musicians playing together", object_class.description
-      assert_equal 6, object_class.fields.size
-      assert_equal 3, object_class.interfaces.size
+      assert_equal 9, object_class.fields.size
+      assert_equal [
+          "GloballyIdentifiable",
+          "HasMusicians",
+          "InvisibleNameEntity",
+          "NamedEntity",
+          "PrivateNameEntity",
+        ], object_class.interfaces.map(&:graphql_name).sort
+      # It filters interfaces, too
+      assert_equal [
+          "GloballyIdentifiable",
+          "HasMusicians",
+          "InvisibleNameEntity",
+          "NamedEntity"
+        ], object_class.interfaces({}).map(&:graphql_name).sort
       # Compatibility methods are delegated to the underlying BaseType
       assert object_class.respond_to?(:connection_type)
     end
@@ -27,9 +39,15 @@ describe GraphQL::Schema::Object do
       end
 
       # one more than the parent class
-      assert_equal 7, new_object_class.fields.size
+      assert_equal 10, new_object_class.fields.size
       # inherited interfaces are present
-      assert_equal 3, new_object_class.interfaces.size
+      assert_equal [
+          "GloballyIdentifiable",
+          "HasMusicians",
+          "InvisibleNameEntity",
+          "NamedEntity",
+          "PrivateNameEntity",
+        ], new_object_class.interfaces.map(&:graphql_name).sort
       # The new field is present
       assert new_object_class.fields.key?("newField")
       # The overridden field is present:
@@ -48,6 +66,12 @@ describe GraphQL::Schema::Object do
       assert_equal object_class.description, new_subclass_2.description
     end
 
+    it "implements visibility constrained interface when context is private" do
+      found_interfaces = object_class.interfaces({ private: true })
+      assert_equal 5, found_interfaces.count
+      assert found_interfaces.any? { |int| int.graphql_name == 'PrivateNameEntity' }
+    end
+
     it "should take Ruby name (without Type suffix) as default graphql name" do
       TestingClassType = Class.new(GraphQL::Schema::Object)
       assert_equal "TestingClass", TestingClassType.graphql_name
@@ -55,7 +79,7 @@ describe GraphQL::Schema::Object do
 
     it "raise on anonymous class without declared graphql name" do
       anonymous_class = Class.new(GraphQL::Schema::Object)
-      assert_raises NotImplementedError do
+      assert_raises GraphQL::RequiredImplementationMissingError do
         anonymous_class.graphql_name
       end
     end
@@ -103,9 +127,18 @@ describe GraphQL::Schema::Object do
       new_method_defs = Hash[methods.zip(methods.map{|method| object_type.method(method.to_sym)})]
       assert_equal method_defs, new_method_defs
     end
+
+    it "can implement legacy interfaces" do
+      object_type = Class.new(GraphQL::Schema::Object) do
+        implements GraphQL::Relay::Node.interface # class-based would be `GraphQL::Types::Relay::Node`
+      end
+      assert_equal ["Node"], object_type.interfaces.map(&:graphql_name)
+      assert_equal ["id"], object_type.fields.keys
+    end
   end
 
-  describe "using GraphQL::Function" do
+  if !TESTING_INTERPRETER
+  describe "using GraphQL::Function" do # rubocop:disable Layout/IndentationWidth
     new_test_func_payload = Class.new(GraphQL::Schema::Object) do
       graphql_name "TestFuncPayload"
       field :name, String, null: false
@@ -175,6 +208,7 @@ describe GraphQL::Schema::Object do
       assert_equal "graphql", res["data"]["testConn"]["edges"][0]["node"]["name"]
     end
   end
+  end
 
   describe "wrapping a Hash" do
     it "automatically looks up symbol and string keys" do
@@ -226,9 +260,9 @@ describe GraphQL::Schema::Object do
     it "returns a matching GraphQL::ObjectType" do
       assert_equal "Ensemble", obj_type.name
       assert_equal "A group of musicians playing together", obj_type.description
-      assert_equal 6, obj_type.all_fields.size
+      assert_equal 9, obj_type.all_fields.size
 
-      name_field = obj_type.all_fields[2]
+      name_field = obj_type.all_fields[3]
       assert_equal "name", name_field.name
       assert_equal GraphQL::STRING_TYPE.to_non_null_type, name_field.type
       assert_equal nil, name_field.description
@@ -247,6 +281,12 @@ describe GraphQL::Schema::Object do
 
       res = Jazz::Schema.execute(query_str)
       assert_equal ["BELA FLECK AND THE FLECKTONES", "ROBERT GLASPER EXPERIMENT"], res["data"]["ensembles"].map { |e| e["upcaseName"] }
+    end
+
+    it "passes on type memberships from superclasses" do
+      obj_type = Jazz::StylishMusician.to_graphql
+      parent_obj_type = Jazz::Musician.to_graphql
+      assert_equal parent_obj_type.interfaces, obj_type.interfaces
     end
   end
 
@@ -310,6 +350,118 @@ describe GraphQL::Schema::Object do
       # TBH I think `{}` is probably righter than `nil`, I guess we'll see.
       skip_value = TESTING_INTERPRETER ? {} : nil
       assert_equal({"data" => skip_value }, res.to_h)
+    end
+  end
+
+  describe "when fields conflict with built-ins" do
+    it "warns when no override" do
+      expected_warning = "X's `field :method` conflicts with a built-in method, use `resolver_method:` to pick a different resolver method for this field (for example, `resolver_method: :resolve_method` and `def resolve_method`). Or use `method_conflict_warning: false` to suppress this warning.\n"
+      assert_output "", expected_warning do
+        Class.new(GraphQL::Schema::Object) do
+          graphql_name "X"
+          field :method, String, null: true
+        end
+      end
+    end
+
+    it "warns when override matches field name" do
+      expected_warning = "X's `field :object` conflicts with a built-in method, use `resolver_method:` to pick a different resolver method for this field (for example, `resolver_method: :resolve_object` and `def resolve_object`). Or use `method_conflict_warning: false` to suppress this warning.\n"
+      assert_output "", expected_warning do
+        Class.new(GraphQL::Schema::Object) do
+          graphql_name "X"
+          field :object, String, null: true, resolver_method: :object
+        end
+      end
+    end
+
+    it "doesn't warn with a resolver_method: override" do
+      assert_output "", "" do
+        Class.new(GraphQL::Schema::Object) do
+          graphql_name "X"
+          field :method, String, null: true, resolver_method: :resolve_method
+        end
+      end
+    end
+
+    it "doesn't warn with a method: override" do
+      assert_output "", "" do
+        Class.new(GraphQL::Schema::Object) do
+          graphql_name "X"
+          field :module, String, null: true, method: :mod
+        end
+      end
+    end
+
+    it "doesn't warn with a suppression" do
+      assert_output "", "" do
+        Class.new(GraphQL::Schema::Object) do
+          graphql_name "X"
+          field :method, String, null: true, method_conflict_warning: false
+        end
+      end
+    end
+
+    it "doesn't warn when parsing a schema" do
+      assert_output "", "" do
+        schema = GraphQL::Schema.from_definition <<-GRAPHQL
+        type Query {
+          method: String
+        }
+        GRAPHQL
+        assert_equal ["method"], schema.query.fields.keys
+      end
+    end
+
+    it "doesn't warn when passing object through using resolver_method" do
+      assert_output "", "" do
+        Class.new(GraphQL::Schema::Object) do
+          graphql_name "X"
+          field :thing, String, null: true, resolver_method: :object
+        end
+      end
+    end
+  end
+
+  describe "type-specific invalid null errors" do
+    class ObjectInvalidNullSchema < GraphQL::Schema
+      module Numberable
+        include GraphQL::Schema::Interface
+
+        field :float, Float, null: false
+
+        def float
+          nil
+        end
+      end
+
+      class Query < GraphQL::Schema::Object
+        implements Numberable
+
+        field :int, Integer, null: false
+        def int
+          nil
+        end
+      end
+      query(Query)
+
+      def self.type_error(err, ctx)
+        raise err
+      end
+
+      use GraphQL::Execution::Interpreter
+      use GraphQL::Analysis::AST
+    end
+
+    it "raises them when invalid nil is returned" do
+      assert_raises(ObjectInvalidNullSchema::Query::InvalidNullError) do
+        ObjectInvalidNullSchema.execute("{ int }")
+      end
+    end
+
+    it "raises them for fields inherited from interfaces" do
+      assert_raises(ObjectInvalidNullSchema::Query::InvalidNullError) do
+        ObjectInvalidNullSchema.execute("{ float }")
+      end
     end
   end
 end

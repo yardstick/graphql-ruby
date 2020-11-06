@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 require "securerandom"
+require "graphql/subscriptions/broadcast_analyzer"
 require "graphql/subscriptions/event"
 require "graphql/subscriptions/instrumentation"
 require "graphql/subscriptions/serialize"
-if defined?(ActionCable)
-  require "graphql/subscriptions/action_cable_subscriptions"
-end
+require "graphql/subscriptions/action_cable_subscriptions"
 require "graphql/subscriptions/subscription_root"
+require "graphql/subscriptions/default_subscription_resolve_extension"
 
 module GraphQL
   class Subscriptions
@@ -18,19 +18,35 @@ module GraphQL
 
     # @see {Subscriptions#initialize} for options, concrete implementations may add options.
     def self.use(defn, options = {})
-      schema = defn.target
-      options[:schema] = schema
-      schema.subscriptions = self.new(options)
+      schema = defn.is_a?(Class) ? defn : defn.target
+
+      if schema.subscriptions
+        raise ArgumentError, "Can't reinstall subscriptions. #{schema} is using #{schema.subscriptions}, can't also add #{self}"
+      end
+
       instrumentation = Subscriptions::Instrumentation.new(schema: schema)
-      defn.instrument(:field, instrumentation)
       defn.instrument(:query, instrumentation)
+      defn.instrument(:field, instrumentation)
+      options[:schema] = schema
+      schema.subscriptions = self.new(**options)
+      schema.add_subscription_extension_if_necessary
       nil
     end
 
     # @param schema [Class] the GraphQL schema this manager belongs to
-    def initialize(schema:, **rest)
+    def initialize(schema:, broadcast: false, default_broadcastable: false, **rest)
+      if broadcast
+        if !schema.using_ast_analysis?
+          raise ArgumentError, "`broadcast: true` requires AST analysis, add `using GraphQL::Analysis::AST` to your schema or see https://graphql-ruby.org/queries/ast_analysis.html."
+        end
+        schema.query_analyzer(Subscriptions::BroadcastAnalyzer)
+      end
+      @default_broadcastable = default_broadcastable
       @schema = schema
     end
+
+    # @return [Boolean] Used when fields don't have `broadcastable:` explicitly set
+    attr_reader :default_broadcastable
 
     # Fetch subscriptions matching this field + arguments pair
     # And pass them off to the queue.
@@ -72,40 +88,64 @@ module GraphQL
     # `event` was triggered on `object`, and `subscription_id` was subscribed,
     # so it should be updated.
     #
-    # Load `subscription_id`'s GraphQL data, re-evaluate the query, and deliver the result.
-    #
-    # This is where a queue may be inserted to push updates in the background.
+    # Load `subscription_id`'s GraphQL data, re-evaluate the query and return the result.
     #
     # @param subscription_id [String]
     # @param event [GraphQL::Subscriptions::Event] The event which was triggered
     # @param object [Object] The value for the subscription field
-    # @return [void]
-    def execute(subscription_id, event, object)
+    # @return [GraphQL::Query::Result]
+    def execute_update(subscription_id, event, object)
       # Lookup the saved data for this subscription
       query_data = read_subscription(subscription_id)
+      if query_data.nil?
+        delete_subscription(subscription_id)
+        return nil
+      end
+
       # Fetch the required keys from the saved data
       query_string = query_data.fetch(:query_string)
       variables = query_data.fetch(:variables)
       context = query_data.fetch(:context)
       operation_name = query_data.fetch(:operation_name)
-      # Re-evaluate the saved query
-      result = @schema.execute(
-        {
-          query: query_string,
-          context: context,
-          subscription_topic: event.topic,
-          operation_name: operation_name,
-          variables: variables,
-          root_value: object,
-        }
-      )
-      deliver(subscription_id, result)
-    rescue GraphQL::Schema::Subscription::NoUpdateError
-      # This update was skipped in user code; do nothing.
-    rescue GraphQL::Schema::Subscription::UnsubscribedError
-      # `unsubscribe` was called, clean up on our side
-      # TODO also send `{more: false}` to client?
-      delete_subscription(subscription_id)
+      result = nil
+      # this will be set to `false` unless `.execute` is terminated
+      # with a `throw :graphql_subscription_unsubscribed`
+      unsubscribed = true
+      catch(:graphql_subscription_unsubscribed) do
+        catch(:graphql_no_subscription_update) do
+          # Re-evaluate the saved query,
+          # but if it terminates early with a `throw`,
+          # it will stay `nil`
+          result = @schema.execute(
+            query: query_string,
+            context: context,
+            subscription_topic: event.topic,
+            operation_name: operation_name,
+            variables: variables,
+            root_value: object,
+          )
+        end
+        unsubscribed = false
+      end
+
+      if unsubscribed
+        # `unsubscribe` was called, clean up on our side
+        # TODO also send `{more: false}` to client?
+        delete_subscription(subscription_id)
+      end
+
+      result
+    end
+
+    # Run the update query for this subscription and deliver it
+    # @see {#execute_update}
+    # @see {#deliver}
+    # @return [void]
+    def execute(subscription_id, event, object)
+      res = execute_update(subscription_id, event, object)
+      if !res.nil?
+        deliver(subscription_id, res)
+      end
     end
 
     # Event `event` occurred on `object`,
@@ -124,7 +164,7 @@ module GraphQL
     # @yieldparam subscription_id [String]
     # @return [void]
     def each_subscription_id(event)
-      raise NotImplementedError
+      raise GraphQL::RequiredImplementationMissingError
     end
 
     # The system wants to send an update to this subscription.
@@ -132,7 +172,7 @@ module GraphQL
     # @param subscription_id [String]
     # @return [Hash] Containing required keys
     def read_subscription(subscription_id)
-      raise NotImplementedError
+      raise GraphQL::RequiredImplementationMissingError
     end
 
     # A subscription query was re-evaluated, returning `result`.
@@ -141,7 +181,7 @@ module GraphQL
     # @param result [Hash]
     # @return [void]
     def deliver(subscription_id, result)
-      raise NotImplementedError
+      raise GraphQL::RequiredImplementationMissingError
     end
 
     # `query` was executed and found subscriptions to `events`.
@@ -150,7 +190,7 @@ module GraphQL
     # @param events [Array<GraphQL::Subscriptions::Event>]
     # @return [void]
     def write_subscription(query, events)
-      raise NotImplementedError
+      raise GraphQL::RequiredImplementationMissingError
     end
 
     # A subscription was terminated server-side.
@@ -158,7 +198,7 @@ module GraphQL
     # @param subscription_id [String]
     # @return void.
     def delete_subscription(subscription_id)
-      raise NotImplementedError
+      raise GraphQL::RequiredImplementationMissingError
     end
 
     # @return [String] A new unique identifier for a subscription
@@ -178,6 +218,16 @@ module GraphQL
       Schema::Member::BuildType.camelize(event_or_arg_name.to_s)
     end
 
+    # @return [Boolean] if true, then a query like this one would be broadcasted
+    def broadcastable?(query_str, **query_options)
+      query = GraphQL::Query.new(@schema, query_str, **query_options)
+      if !query.valid?
+        raise "Invalid query: #{query.validation_errors.map(&:to_h).inspect}"
+      end
+      GraphQL::Analysis::AST.analyze_query(query, @schema.query_analyzers)
+      query.context.namespace(:subscriptions)[:subscription_broadcastable]
+    end
+
     private
 
     # Recursively normalize `args` as belonging to `arg_owner`:
@@ -188,7 +238,11 @@ module GraphQL
     # @return [Any] normalized arguments value
     def normalize_arguments(event_name, arg_owner, args)
       case arg_owner
-      when GraphQL::Field, GraphQL::InputObjectType
+      when GraphQL::Field, GraphQL::InputObjectType, GraphQL::Schema::Field, Class
+        if arg_owner.is_a?(Class) && !arg_owner.kind.input_object?
+          # it's a type, but not an input object
+          return args
+        end
         normalized_args = {}
         missing_arg_names = []
         args.each do |k, v|
@@ -202,16 +256,35 @@ module GraphQL
           end
 
           if arg_defn
-            normalized_args[normalized_arg_name] = normalize_arguments(event_name, arg_defn.type, v)
+            if arg_defn.loads
+              normalized_arg_name = arg_defn.keyword.to_s
+            end
+            normalized = normalize_arguments(event_name, arg_defn.type, v)
+            normalized_args[normalized_arg_name] = normalized
           else
             # Couldn't find a matching argument definition
             missing_arg_names << arg_name
           end
         end
 
+        # Backfill default values so that trigger arguments
+        # match query arguments.
+        arg_owner.arguments.each do |name, arg_defn|
+          if arg_defn.default_value? && !normalized_args.key?(arg_defn.name)
+            default_value = arg_defn.default_value
+            # We don't have an underlying "object" here, so it can't call methods.
+            # This is broken.
+            normalized_args[arg_defn.name] = arg_defn.prepare_value(nil, default_value, context: GraphQL::Query::NullContext)
+          end
+        end
+
         if missing_arg_names.any?
           arg_owner_name = if arg_owner.is_a?(GraphQL::Field)
             "Subscription.#{arg_owner.name}"
+          elsif arg_owner.is_a?(GraphQL::Schema::Field)
+            arg_owner.path
+          elsif arg_owner.is_a?(Class)
+            arg_owner.graphql_name
           else
             arg_owner.to_s
           end
@@ -219,9 +292,9 @@ module GraphQL
         end
 
         normalized_args
-      when GraphQL::ListType
+      when GraphQL::ListType, GraphQL::Schema::List
         args.map { |a| normalize_arguments(event_name, arg_owner.of_type, a) }
-      when GraphQL::NonNullType
+      when GraphQL::NonNullType, GraphQL::Schema::NonNull
         normalize_arguments(event_name, arg_owner.of_type, args)
       else
         args

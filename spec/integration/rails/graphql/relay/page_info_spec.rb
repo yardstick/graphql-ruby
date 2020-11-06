@@ -15,7 +15,7 @@ describe GraphQL::Relay::PageInfo do
   end
 
   let(:cursor_of_last_base) {
-    result = star_wars_query(query_string, "first" => 100)
+    result = star_wars_query(query_string, { "first" => 100 })
     get_last_cursor(result)
   }
 
@@ -23,14 +23,14 @@ describe GraphQL::Relay::PageInfo do
     query getShips($first: Int, $after: String, $last: Int, $before: String, $nameIncludes: String){
       empire {
         bases(first: $first, after: $after, last: $last, before: $before, nameIncludes: $nameIncludes) {
-          edges {
-            cursor
-          }
           pageInfo {
             hasNextPage
             hasPreviousPage
             startCursor
             endCursor
+          },
+          edges {
+            cursor
           }
         }
       }
@@ -43,44 +43,51 @@ describe GraphQL::Relay::PageInfo do
 
   describe 'hasNextPage / hasPreviousPage' do
     it "hasNextPage is true if there are more items" do
-      result = star_wars_query(query_string, "first" => 2)
+      result = star_wars_query(query_string, { "first" => 2 })
       assert_equal(true, get_page_info(result)["hasNextPage"])
       assert_equal(false, get_page_info(result)["hasPreviousPage"], "hasPreviousPage is false if 'last' is missing")
       assert_equal("MQ", get_page_info(result)["startCursor"])
       assert_equal("Mg", get_page_info(result)["endCursor"])
 
       last_cursor = get_last_cursor(result)
-      result = star_wars_query(query_string, "first" => 100, "after" => last_cursor)
+      result = star_wars_query(query_string, { "first" => 100, "after" => last_cursor })
+      backwards_pagination = TESTING_INTERPRETER ? true : false
       assert_equal(false, get_page_info(result)["hasNextPage"])
-      assert_equal(false, get_page_info(result)["hasPreviousPage"])
+      assert_equal(backwards_pagination, get_page_info(result)["hasPreviousPage"])
       assert_equal("Mw", get_page_info(result)["startCursor"])
       assert_equal("Mw", get_page_info(result)["endCursor"])
     end
 
     it "hasPreviousPage if there are more items" do
-      result = star_wars_query(query_string, "last" => 100, "before" => cursor_of_last_base)
-      assert_equal(false, get_page_info(result)["hasNextPage"])
+      result = star_wars_query(query_string, { "last" => 100, "before" => cursor_of_last_base })
+      backwards_pagination = TESTING_INTERPRETER ? true : false
+      assert_equal(backwards_pagination, get_page_info(result)["hasNextPage"])
       assert_equal(false, get_page_info(result)["hasPreviousPage"])
       assert_equal("MQ", get_page_info(result)["startCursor"])
       assert_equal("Mg", get_page_info(result)["endCursor"])
 
-      result = star_wars_query(query_string, "last" => 1, "before" => cursor_of_last_base)
-      assert_equal(false, get_page_info(result)["hasNextPage"])
+      result = star_wars_query(query_string, { "last" => 1, "before" => cursor_of_last_base })
+      assert_equal(backwards_pagination, get_page_info(result)["hasNextPage"])
       assert_equal(true, get_page_info(result)["hasPreviousPage"])
       assert_equal("Mg", get_page_info(result)["startCursor"])
       assert_equal("Mg", get_page_info(result)["endCursor"])
     end
 
     it "has both if first and last are present" do
-      result = star_wars_query(query_string, "last" => 1, "first" => 1, "before" => cursor_of_last_base)
+      result = star_wars_query(query_string, { "last" => 1, "first" => 1, "before" => cursor_of_last_base })
+      # I think this was actually a bug in the previous implementation.
+      # This query returns the first node in the list:
+      #     Base64.decode64("MQ") # => "1"
+      # So, there is _not_ a previous page.
+      prev_page = TESTING_INTERPRETER ? false : true
       assert_equal(true, get_page_info(result)["hasNextPage"])
-      assert_equal(true, get_page_info(result)["hasPreviousPage"])
+      assert_equal(prev_page, get_page_info(result)["hasPreviousPage"])
       assert_equal("MQ", get_page_info(result)["startCursor"])
       assert_equal("MQ", get_page_info(result)["endCursor"])
     end
 
     it "startCursor and endCursor are the cursors of the first and last edge" do
-      result = star_wars_query(query_string, "first" => 2)
+      result = star_wars_query(query_string, { "first" => 2 })
       assert_equal(true, get_page_info(result)["hasNextPage"])
       assert_equal(false, get_page_info(result)["hasPreviousPage"])
       assert_equal("MQ", get_page_info(result)["startCursor"])
@@ -88,16 +95,17 @@ describe GraphQL::Relay::PageInfo do
       assert_equal("MQ", get_first_cursor(result))
       assert_equal("Mg", get_last_cursor(result))
 
-      result = star_wars_query(query_string, "first" => 1, "after" => get_page_info(result)["endCursor"])
+      result = star_wars_query(query_string, { "first" => 1, "after" => get_page_info(result)["endCursor"] })
+      backwards_pagination = TESTING_INTERPRETER ? true : false
       assert_equal(false, get_page_info(result)["hasNextPage"])
-      assert_equal(false, get_page_info(result)["hasPreviousPage"])
+      assert_equal(backwards_pagination, get_page_info(result)["hasPreviousPage"])
       assert_equal("Mw", get_page_info(result)["startCursor"])
       assert_equal("Mw", get_page_info(result)["endCursor"])
       assert_equal("Mw", get_first_cursor(result))
       assert_equal("Mw", get_last_cursor(result))
 
-      result = star_wars_query(query_string, "last" => 1, "before" => get_page_info(result)["endCursor"])
-      assert_equal(false, get_page_info(result)["hasNextPage"])
+      result = star_wars_query(query_string, { "last" => 1, "before" => get_page_info(result)["endCursor"] })
+      assert_equal(backwards_pagination, get_page_info(result)["hasNextPage"])
       assert_equal(true, get_page_info(result)["hasPreviousPage"])
       assert_equal("Mg", get_page_info(result)["startCursor"])
       assert_equal("Mg", get_page_info(result)["endCursor"])

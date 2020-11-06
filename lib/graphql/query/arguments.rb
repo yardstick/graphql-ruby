@@ -11,24 +11,26 @@ module GraphQL
       def self.construct_arguments_class(argument_owner)
         argument_definitions = argument_owner.arguments
         argument_owner.arguments_class = Class.new(self) do
+          self.argument_owner = argument_owner
           self.argument_definitions = argument_definitions
 
           argument_definitions.each do |_arg_name, arg_definition|
-            expose_as = arg_definition.expose_as.to_s.freeze
-            expose_as_underscored = GraphQL::Schema::Member::BuildType.underscore(expose_as).freeze
-            method_names = [expose_as, expose_as_underscored].uniq
-            method_names.each do |method_name|
-              # Don't define a helper method if it would override something.
-              if method_defined?(method_name)
-                warn(
-                  "Unable to define a helper for argument with name '#{method_name}' "\
-                  "as this is a reserved name. If you're using an argument such as "\
-                  "`argument #{method_name}`, consider renaming this argument.`"
-                )
-              else
-                define_method(method_name) do
-                  # Always use `expose_as` here, since #[] doesn't accept underscored names
-                  self[expose_as]
+            if arg_definition.method_access?
+              expose_as = arg_definition.expose_as.to_s.freeze
+              expose_as_underscored = GraphQL::Schema::Member::BuildType.underscore(expose_as).freeze
+              method_names = [expose_as, expose_as_underscored].uniq
+              method_names.each do |method_name|
+                # Don't define a helper method if it would override something.
+                if method_defined?(method_name)
+                  warn(
+                    "Unable to define a helper for argument with name '#{method_name}' "\
+                    "as this is a reserved name. Add `method_access: false` to stop this warning."
+                  )
+                else
+                  define_method(method_name) do
+                    # Always use `expose_as` here, since #[] doesn't accept underscored names
+                    self[expose_as]
+                  end
                 end
               end
             end
@@ -84,7 +86,12 @@ module GraphQL
         end
       end
 
-      def_delegators :to_h, :keys, :values, :each, :any?
+      def_delegators :to_h, :keys, :values, :each
+      def_delegators :@argument_values, :any?
+
+      def prepare
+        self
+      end
 
       # Access each key, value and type for the arguments in this set.
       # @yield [argument_value] The {ArgumentValue} for each argument
@@ -96,7 +103,7 @@ module GraphQL
       end
 
       class << self
-        attr_accessor :argument_definitions
+        attr_accessor :argument_definitions, :argument_owner
       end
 
       NoArguments = Class.new(self) do
@@ -116,6 +123,8 @@ module GraphQL
 
         ruby_kwargs
       end
+
+      alias :to_hash :to_kwargs
 
       private
 
@@ -149,7 +158,8 @@ module GraphQL
             wrap_value(value, arg_defn_type.of_type, context)
           when GraphQL::InputObjectType
             if value.is_a?(Hash)
-              arg_defn_type.arguments_class.new(value, context: context, defaults_used: Set.new)
+              result = arg_defn_type.arguments_class.new(value, context: context, defaults_used: Set.new)
+              result.prepare
             else
               value
             end

@@ -5,7 +5,7 @@ describe GraphQL::Schema::BuildFromDefinition do
   # Build a schema from `definition` and assert that it
   # prints out the same string.
   # Then return the built schema.
-  def build_schema_and_compare_output(definition)
+  def assert_schema_and_compare_output(definition)
     built_schema = GraphQL::Schema.from_definition(definition)
     assert_equal definition, GraphQL::Schema::Printer.print_schema(built_schema)
     built_schema
@@ -27,7 +27,21 @@ type HelloScalars {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
+    end
+
+    it 'can build a schema with underscored names' do
+      schema = <<-SCHEMA
+type A_Type {
+  f(argument_1: Int, argument_two: Int): Int
+}
+
+type Query {
+  some_field: A_Type
+}
+      SCHEMA
+
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'can build a schema with default input object values' do
@@ -41,7 +55,7 @@ type Query {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'can build a schema with directives' do
@@ -57,7 +71,7 @@ type Hello {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'supports descriptions and definition_line' do
@@ -99,6 +113,7 @@ type Hello implements I {
   And a field to boot
   """
   str(i: Input): String
+  u: U
 }
 
 """
@@ -126,7 +141,7 @@ And a union
 union U = Hello
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
 
       built_schema = GraphQL::Schema.from_definition(schema)
       # The schema's are the same since there's no description
@@ -157,17 +172,17 @@ union U = Hello
       assert_equal 34, field.ast_node.line
       assert_equal 37, field.ast_node.definition_line
 
-      assert_equal 40, built_schema.types["I"].ast_node.line
-      assert_equal 43, built_schema.types["I"].ast_node.definition_line
+      assert_equal 41, built_schema.types["I"].ast_node.line
+      assert_equal 44, built_schema.types["I"].ast_node.definition_line
 
-      assert_equal 47, built_schema.types["Input"].ast_node.line
-      assert_equal 50, built_schema.types["Input"].ast_node.definition_line
+      assert_equal 48, built_schema.types["Input"].ast_node.line
+      assert_equal 51, built_schema.types["Input"].ast_node.definition_line
 
-      assert_equal 54, built_schema.types["S"].ast_node.line
-      assert_equal 57, built_schema.types["S"].ast_node.definition_line
+      assert_equal 55, built_schema.types["S"].ast_node.line
+      assert_equal 58, built_schema.types["S"].ast_node.definition_line
 
-      assert_equal 59, built_schema.types["U"].ast_node.line
-      assert_equal 62, built_schema.types["U"].ast_node.definition_line
+      assert_equal 60, built_schema.types["U"].ast_node.line
+      assert_equal 63, built_schema.types["U"].ast_node.definition_line
     end
 
     it 'maintains built-in directives' do
@@ -244,7 +259,7 @@ type HelloScalars {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'supports recursive type' do
@@ -259,7 +274,7 @@ type Recurse {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'supports two types circular' do
@@ -279,7 +294,7 @@ type TypeTwo {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'supports single argument fields' do
@@ -297,7 +312,7 @@ type Hello {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'properly understands connections' do
@@ -411,7 +426,7 @@ type Type {
 }
       SCHEMA
 
-      built_schema = build_schema_and_compare_output(schema.chop)
+      built_schema = assert_schema_and_compare_output(schema.chop)
       obj = built_schema.types["Type"]
       refute obj.fields["organization"].connection?
       assert obj.fields["organizations"].connection?
@@ -428,7 +443,7 @@ type Hello {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'supports simple type with interface' do
@@ -446,7 +461,7 @@ interface WorldInterface {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'supports simple output enum' do
@@ -464,7 +479,7 @@ type OutputEnumRoot {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'supports simple input enum' do
@@ -482,7 +497,7 @@ type InputEnumRoot {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'supports multiple value enum' do
@@ -501,7 +516,7 @@ type OutputEnumRoot {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'supports simple union' do
@@ -521,7 +536,7 @@ type World {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'supports multiple union' do
@@ -545,7 +560,25 @@ type WorldTwo {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
+    end
+
+    it 'supports redefining built-in scalars' do
+      schema = <<-SCHEMA
+schema {
+  query: Root
+}
+
+scalar ID
+
+type Root {
+  builtInScalar: ID
+}
+      SCHEMA
+
+      built_schema = assert_schema_and_compare_output(schema.chop)
+      id_scalar = built_schema.types["ID"]
+      assert_equal true, id_scalar.valid_isolated_input?("123")
     end
 
     it 'supports custom scalar' do
@@ -561,7 +594,7 @@ type Root {
 }
       SCHEMA
 
-      built_schema = build_schema_and_compare_output(schema.chop)
+      built_schema = assert_schema_and_compare_output(schema.chop)
       custom_scalar = built_schema.types["CustomScalar"]
       assert_equal true, custom_scalar.valid_isolated_input?("anything")
       assert_equal true, custom_scalar.valid_isolated_input?(12345)
@@ -583,7 +616,7 @@ type Root {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'supports simple argument field with default value' do
@@ -604,7 +637,7 @@ type Hello {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'supports simple type with mutation' do
@@ -625,7 +658,7 @@ type Mutation {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'supports simple type with mutation and default values' do
@@ -644,7 +677,7 @@ type Query {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'supports simple type with subscription' do
@@ -665,7 +698,7 @@ type Subscription {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'supports unreferenced type implementing referenced interface' do
@@ -683,7 +716,7 @@ type Query {
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'supports unreferenced type implementing referenced union' do
@@ -699,7 +732,7 @@ type Query {
 union Union = Concrete
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it 'supports @deprecated' do
@@ -710,23 +743,20 @@ enum MyEnum {
   VALUE
 }
 
+input MyInput {
+  int: Int @deprecated(reason: "This is not the argument you're looking for")
+  string: String
+}
+
 type Query {
   enum: MyEnum
   field1: String @deprecated
   field2: Int @deprecated(reason: "Because I said so")
+  field3(deprecatedArg: MyInput @deprecated(reason: "Use something else")): String
 }
       SCHEMA
 
-      build_schema_and_compare_output(schema.chop)
-    end
-
-    it 'supports empty types' do
-      schema = <<-SCHEMA
-type Query {
-}
-      SCHEMA
-
-      build_schema_and_compare_output(schema.chop)
+      assert_schema_and_compare_output(schema.chop)
     end
 
     it "tracks original AST node" do
@@ -788,6 +818,30 @@ type Type implements Interface {
       assert_equal [28, 3], schema.directives["Directive"].arguments["argument"].ast_node.position
       assert_equal [31, 22], schema.types["Type"].ast_node.interfaces[0].position
     end
+
+    it 'can build a schema from a file path' do
+      schema = <<-SCHEMA
+schema {
+  query: HelloScalars
+}
+
+type HelloScalars {
+  bool: Boolean
+  float: Float
+  id: ID
+  int: Int
+  str: String!
+}
+      SCHEMA
+
+      Tempfile.create(['test', '.graphql']) do |file|
+        file.write(schema)
+        file.close
+
+        built_schema = GraphQL::Schema.from_definition(file.path)
+        assert_equal schema.strip, GraphQL::Schema::Printer.print_schema(built_schema)
+      end
+    end
   end
 
   describe 'Failures' do
@@ -839,6 +893,21 @@ SCHEMA
         GraphQL::Schema.from_definition(schema)
       end
       assert_equal 'Must provide schema definition with query type or a type named Query.', err.message
+    end
+
+    it 'Requires a query type that defines at least one field' do
+      schema = <<-SCHEMA
+schema {
+  query: Hello
+}
+
+type Hello { }
+SCHEMA
+
+      err = assert_raises(GraphQL::Schema::InvalidTypeError) do
+        GraphQL::Schema.from_definition(schema).to_graphql
+      end
+      assert_equal 'Hello is invalid: Hello must define at least 1 field. 0 defined.', err.message
     end
 
     it 'Unknown type referenced' do
@@ -1063,6 +1132,16 @@ SCHEMA
 
       assert_equal({ "str" => "abc", "int" => 123 }, result["data"])
     end
+
+    it "doesn't warn about method conflicts" do
+      assert_output "", "" do
+        GraphQL::Schema.from_definition "
+        type Query {
+          int(method: Int): Int
+        }
+        "
+      end
+    end
   end
 
   describe "executable schemas from string" do
@@ -1154,8 +1233,8 @@ SCHEMA
 
         def call(type, field, obj, args, ctx)
           @resolves
-            .fetch(type.name)
-            .fetch(field.name)
+            .fetch(type.graphql_name)
+            .fetch(field.graphql_name)
             .call(obj, args, ctx)
         end
       end
@@ -1164,7 +1243,7 @@ SCHEMA
         schema = GraphQL::Schema.from_definition(schema_defn, default_resolve: AppResolver.new)
         schema.execute("mutation { todoAdd: todo_add(text: \"Buy Milk\") { text } }", context: {context_value: "bar"})
         result = schema.execute("query { allTodos: all_todos { text, from_context } }")
-        assert_equal(result.to_json, '{"data":{"allTodos":[{"text":"Pay the bills.","from_context":null},{"text":"Buy Milk","from_context":"bar"}]}}')
+        assert_equal('{"data":{"allTodos":[{"text":"Pay the bills.","from_context":null},{"text":"Buy Milk","from_context":"bar"}]}}', result.to_json)
       end
     end
 
@@ -1182,6 +1261,142 @@ SCHEMA
           GraphQL::Schema.from_definition(schema_defn, parser: BadParser)
         end
       end
+    end
+
+    describe "relay behaviors" do
+      let(:schema_defn) { <<-GRAPHQL
+interface Node {
+  id: ID!
+}
+
+type Query {
+  node(id: ID!): Node
+}
+
+type Thing implements Node {
+  id: ID!
+  name: String!
+  otherThings(after: String, first: Int): ThingConnection!
+}
+
+type ThingConnection {
+  edges: [ThingEdge!]!
+}
+
+type ThingEdge {
+  cursor: String!
+  node: Thing!
+}
+      GRAPHQL
+      }
+      let(:query_string) {'
+        {
+          node(id: "taco") {
+            ... on Thing {
+              name
+              otherThings {
+                edges {
+                  node {
+                    name
+                  }
+                cursor
+                }
+              }
+            }
+          }
+        }
+      '}
+
+      it "doesn't try to add them" do
+        default_resolve = {
+          "Query" => {
+            "node" => ->(obj, args, ctx) {
+              OpenStruct.new(
+                name: "taco-thing",
+                otherThings: OpenStruct.new(
+                  edges: [
+                    OpenStruct.new(cursor: "a", node: OpenStruct.new(name: "other-thing-a")),
+                    OpenStruct.new(cursor: "b", node: OpenStruct.new(name: "other-thing-b")),
+                  ]
+                )
+              )
+            }
+          },
+          "resolve_type" => ->(type, obj, ctx) {
+            ctx.query.get_type("Thing")
+          }
+        }
+        schema = GraphQL::Schema.from_definition(schema_defn, default_resolve: default_resolve)
+        result = schema.execute(query_string)
+
+        expected_data = {
+          "node" => {
+            "name" => "taco-thing",
+            "otherThings" => {
+              "edges" => [
+                {"node" => {"name" => "other-thing-a"}, "cursor" => "a"},
+                {"node" => {"name" => "other-thing-b"}, "cursor" => "b"},
+              ]
+            }
+          }
+        }
+        assert_equal expected_data, result["data"]
+      end
+
+      it "doesn't add arguments that aren't in the IDL" do
+        schema = GraphQL::Schema.from_definition(schema_defn)
+        assert_equal schema_defn.chomp, schema.to_definition
+      end
+    end
+  end
+
+  describe "orphan types" do
+    it "only puts unreachable types in orphan types" do
+      schema = GraphQL::Schema.from_definition <<-GRAPHQL
+      type Query {
+        node(id: ID!): Node
+        t1: ReachableType
+      }
+
+      interface Node {
+        id: ID!
+      }
+
+      type ReachableType implements Node {
+        id: ID!
+      }
+
+      type ReachableThroughInterfaceType implements Node {
+        id: ID!
+      }
+
+      type UnreachableType {
+        id: ID!
+      }
+      GRAPHQL
+
+      assert_equal [], schema.orphan_types.map(&:graphql_name)
+
+      expected_definition = <<-GRAPHQL.chomp
+interface Node {
+  id: ID!
+}
+
+type Query {
+  node(id: ID!): Node
+  t1: ReachableType
+}
+
+type ReachableThroughInterfaceType implements Node {
+  id: ID!
+}
+
+type ReachableType implements Node {
+  id: ID!
+}
+      GRAPHQL
+
+      assert_equal expected_definition, schema.to_definition, "UnreachableType is excluded"
     end
   end
 end

@@ -67,7 +67,7 @@ module LazyHelpers
       end
     end
 
-    field :nestedSum, LazySum, null: false do
+    field :nested_sum, LazySum, null: false do
       argument :value, Integer, required: true
     end
 
@@ -79,7 +79,7 @@ module LazyHelpers
       end
     end
 
-    field :nullableNestedSum, LazySum, null: true do
+    field :nullable_nested_sum, LazySum, null: true do
       argument :value, Integer, required: true
     end
     alias :nullable_nested_sum :nested_sum
@@ -123,7 +123,7 @@ module LazyHelpers
     end
 
     field :list_sum, [LazySum, null: true], null: true do
-      argument :values, [Integer], required: true
+      argument :values, [Integer], required: true, method_access: false
     end
     def list_sum(values:)
       values.map { |v| v == MAGIC_NUMBER_THAT_RETURNS_NIL ? nil : v }
@@ -171,10 +171,8 @@ module LazyHelpers
     instrument(:multiplex, SumAllInstrumentation.new(counter: 1))
     instrument(:multiplex, SumAllInstrumentation.new(counter: 2))
 
-    if TESTING_INTERPRETER
-      use GraphQL::Execution::Interpreter
-      use GraphQL::Analysis::AST
-    end
+    use GraphQL::Execution::Interpreter
+    use GraphQL::Analysis::AST
 
     def self.sync_lazy(lazy)
       if lazy.is_a?(SumAll) && lazy.own_value > 1000

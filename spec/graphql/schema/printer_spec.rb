@@ -19,14 +19,14 @@ Use "BAR" instead.
 
 It's the replacement for this value.
 REASON
-      value "WOZ", deprecation_reason: GraphQL::Directive::DEFAULT_DEPRECATION_REASON
+      value "WOZ", deprecation_reason: GraphQL::Schema::Directive::DEFAULT_DEPRECATION_REASON
     end
 
     sub_input_type = GraphQL::InputObjectType.define do
       name "Sub"
       description "Test"
       input_field :string, types.String, 'Something'
-      input_field :int, types.Int, 'Something'
+      input_field :int, types.Int, 'Something', deprecation_reason: 'Do something else'
     end
 
     variant_input_type = GraphQL::InputObjectType.define do
@@ -91,6 +91,7 @@ REASON
         argument :id, !types.ID, 'Post ID'
         argument :varied, variant_input_type, default_value: { id: "123", int: 234, float: 2.3, enum: :foo, sub: [{ string: "str" }] }
         argument :variedWithNulls, variant_input_type, default_value: { id: nil, int: nil, float: nil, enum: nil, sub: nil }
+        argument :deprecatedArg, types.String, deprecation_reason: 'Use something else'
         resolve ->(obj, args, ctx) { Post.find(args["id"]) }
       end
     end
@@ -150,7 +151,7 @@ directive @deprecated(
   [Markdown](https://daringfireball.net/projects/markdown/).
   """
   reason: String = "No longer supported"
-) on FIELD_DEFINITION | ENUM_VALUE
+) on FIELD_DEFINITION | ENUM_VALUE | ARGUMENT_DEFINITION | INPUT_FIELD_DEFINITION
 
 """
 Directs the executor to include this field or fragment only when the `if` argument is true.
@@ -303,7 +304,7 @@ Object and Interface types are described by a list of Fields, each of which has
 a name, potentially a list of arguments, and a return type.
 """
 type __Field {
-  args: [__InputValue!]!
+  args(includeDeprecated: Boolean = false): [__InputValue!]!
   deprecationReason: String
   description: String
   isDeprecated: Boolean!
@@ -321,7 +322,9 @@ type __InputValue {
   A GraphQL-formatted string representing the default value for this input value.
   """
   defaultValue: String
+  deprecationReason: String
   description: String
+  isDeprecated: Boolean!
   name: String!
   type: __Type!
 }
@@ -372,7 +375,7 @@ type __Type {
   description: String
   enumValues(includeDeprecated: Boolean = false): [__EnumValue!]
   fields(includeDeprecated: Boolean = false): [__Field!]
-  inputFields: [__InputValue!]
+  inputFields(includeDeprecated: Boolean = false): [__InputValue!]
   interfaces: [__Type!]
   kind: __TypeKind!
   name: String
@@ -559,6 +562,8 @@ The query root of this schema
 """
 type Query {
   post(
+    deprecatedArg: String @deprecated(reason: "Use something else")
+
     """
     Post ID
     """
@@ -575,7 +580,7 @@ input Sub {
   """
   Something
   """
-  int: Int
+  int: Int @deprecated(reason: "Do something else")
 
   """
   Something
@@ -613,6 +618,7 @@ SCHEMA
 
       schema = Class.new(GraphQL::Schema) do
         query query_type
+        use GraphQL::Execution::Interpreter
       end
 
       expected = "type Query {\n  foobar: Int!\n}"
@@ -622,19 +628,20 @@ SCHEMA
 
   it "applies an `only` filter" do
     expected = <<SCHEMA
-enum Choice {
-  BAR
-  FOO
+"""
+A blog post
+"""
+type Post {
+  body: String!
+  id: ID!
+  title: String!
 }
 
-type Subscription {
-}
-
-input Varied {
-  bool: Boolean
-  enum: Choice = FOO
-  float: Float
-  int: Int
+"""
+The query root of this schema
+"""
+type Query {
+  post(deprecatedArg: String @deprecated(reason: "Use something else")): Post
 }
 SCHEMA
 
@@ -653,7 +660,7 @@ SCHEMA
       end
     }
 
-    context = { names: ["Varied", "Choice", "Subscription"] }
+    context = { names: ["Query", "Post"] }
     assert_equal expected.chomp, schema.to_definition(context: context, only: only_filter)
   end
 
@@ -664,11 +671,6 @@ type Audio {
   duration: Int!
   id: ID!
   name: String!
-}
-
-enum Choice {
-  BAR
-  FOO
 }
 
 """
@@ -779,7 +781,7 @@ input Sub {
   """
   Something
   """
-  int: Int
+  int: Int @deprecated(reason: "Do something else")
 
   """
   Something
@@ -829,41 +831,52 @@ SCHEMA
 
   describe "#print_directive" do
     it "prints the deprecation reason in a single line escaped string including line breaks" do
-      expected = <<SCHEMA
+      expected = <<SCHEMA.chomp
 enum Choice {
   BAR
   BAZ @deprecated(reason: "Use \\\"BAR\\\" instead.\\n\\nIt's the replacement for this value.\\n")
   FOO
   WOZ @deprecated
 }
-
-type Subscription {
-}
-
-input Varied {
-  bool: Boolean
-  enum: Choice = FOO
-  float: Float
-  int: Int
-}
 SCHEMA
 
-      only_filter = ->(member, ctx) {
-        case member
-        when GraphQL::ScalarType
-          true
-        when GraphQL::BaseType
-          ctx[:names].include?(member.name)
-        when GraphQL::Argument
-          member.name != "id"
-        else
-          true
-        end
-      }
-
-      context = { names: ["Varied", "Choice", "Subscription"] }
-
-      assert_equal expected.chomp, GraphQL::Schema::Printer.new(schema, context: context, only: only_filter).print_schema
+      assert_includes GraphQL::Schema::Printer.new(schema).print_schema, expected
     end
+  end
+
+  it "prints schemas from class" do
+    class TestPrintSchema < GraphQL::Schema
+      class OddlyNamedQuery < GraphQL::Schema::Object
+        field :int, Int, null: false
+      end
+
+      query(OddlyNamedQuery)
+      use GraphQL::Execution::Interpreter
+    end
+
+
+    str = GraphQL::Schema::Printer.print_schema TestPrintSchema
+    assert_equal "schema {\n  query: OddlyNamedQuery\n}\n\ntype OddlyNamedQuery {\n  int: Int!\n}", str
+  end
+
+  it "prints directives parsed from IDL" do
+    input = <<-GRAPHQL
+input I {
+  i1: Int @intDir(a: 1)
+}
+
+type Query @someDirective {
+  e(i: I): Thing
+  i: Int! @customDirective
+}
+
+enum Thing {
+  A @a(a: A)
+  B @b(b: {b: B})
+}
+    GRAPHQL
+
+    schema = GraphQL::Schema.from_definition(input)
+    assert_equal input.chomp, GraphQL::Schema::Printer.print_schema(schema)
   end
 end

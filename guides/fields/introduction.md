@@ -52,7 +52,7 @@ field :scores, [Integer, null: true], null: true # `[Int]`, may return a list or
 
 ### Field Documentation
 
-Fields maybe documented with a __description__ and may be __deprecated__.
+Fields may be documented with a __description__ and may be __deprecated__.
 
 __Descriptions__ can be added with the `field(...)` method as a positional argument, a keyword argument, or inside the block:
 
@@ -188,10 +188,13 @@ Inside a field method, you can access some low-level objects from the GraphQL-Ru
 
 A few `extras` are available:
 
-- `irep_node`
 - `ast_node`
-- `parent`, the parent field context
+- `graphql_name` (the field's name)
+- `owner` (the type that this field belongs to)
+- `lookahead` (see {% internal_link "Lookahead", "/queries/lookahead" %})
 - `execution_errors`, whose `#add(err_or_msg)` method should be used for adding errors
+- `argument_details` (Intepreter only), an instance of {{ "GraphQL::Execution::Interpreter::Arguments" | api_doc }} with argument metadata
+- Custom extras, see below
 
 To inject them into your field method, first, add the `extras:` option to the field definition:
 

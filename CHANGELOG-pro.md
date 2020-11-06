@@ -8,6 +8,193 @@
 
 ### Bug Fix
 
+## 1.15.7 (29 Sept 2020)
+
+### Bug Fix
+
+- Encoder: fix Ruby 2.7 warning #3161
+- Stable connections: Handle `ARRAY[...]` selections and cursors on Postgres #3166
+- Pundit: properly lookup policies for list inputs #3146
+
+## 1.15.6 (17 Sept 2020)
+
+### Bug Fix
+
+- Stable Connections: Use method access to get `.cursor_#{idx}` values instead of `.attributes[:cursor_#{idx}]`, fixes #3149
+
+## 1.15.5
+
+### New Features
+
+- Stable Connections: use `.to_sql` to handle orderings that use complex Arel expressions (#3109)
+
+## 1.15.4 (28 July 2020)
+
+### New Features
+
+- Pundit: add `pundit_policy_class_for(object, context)` and `pundit_role_for(object, context)` for custom runtime lookups
+
+## 1.15.3 (17 July 2020)
+
+### Bug Fix
+
+- Subscriptions: don't send empty updates when subscriptions return `:no_update`
+
+## 1.15.2 (16 July 2020)
+
+### New Features
+
+- OperationStore: improve handling of archived operations in index views
+
+## 1.15.1 (16 July 2020)
+
+(Oops, bad release!)
+
+## 1.15.0 (15 July 2020)
+
+- OperationStore: Store & display `last_used_at` for operation store clients and operations. To upgrade, add the column to your ActiveRecord table:
+
+  ```ruby
+  add_column :graphql_client_operations, :last_used_at, :datetime
+  ```
+
+  (It works out-of-the-box with the Redis backend.)
+
+  You can opt out of this feature by adding `use GraphQL::Pro::OperationStore, ... default_touch_last_used_at: false` to your schema setup.
+
+- OperationStore: Add archive/unarchive workflow for operations. To upgrade, add the column to your table:
+
+  ```ruby
+  add_column :graphql_client_operations, :is_archived, :boolean, index: true
+  ```
+
+  (It works out-of-the-box with the Redis backend.)
+
+- OperationStore: Fix indexing of enum values
+
+## 1.14.1 (29 June 2020)
+
+- CanCan: Accept `can_can_attribute:` configuration, which is passed as the third input to `.can?(...)`
+
+## 1.14.0 (13 June 2020)
+
+### New Features
+
+- Add PubnubSubscriptions
+- Update subscription implementations to support `broadcast: true` when available
+
+### Bug Fix
+
+- More Ruby 2.7 warning fixes
+
+## 1.13.6 (8 June 2020)
+
+### Bug Fix
+
+- Return the proper `pageInfo` values when it's requested before `edges` or `nodes` (#2972)
+
+## 1.13.5 (11 May 2020)
+
+### Bug Fix
+
+- Fix some warnings on Ruby 2.7
+
+## 1.13.4 (17 Apr 2020)
+
+### Bug Fix
+
+- StableRelationConnection: properly return `hasNextPage: true` when `before` and `max_page_size` are used.
+
+## 1.13.3 (2 Apr 2020)
+
+### New Features
+
+- `GraphQL::Pro::OperationStore::Migration` can be used to copy persisted operations from one backend to another (eg, ActiveRecord to Redis). See the source file, `lib/graphql/pro/operation_store/migration.rb` for docs.
+
+## 1.13.2 (28 Mar 2020)
+
+### Deprecations
+
+- `GraphQL::Pro::Subscriptions` is deprecated; use `GraphQL::Pro::PusherSubscriptions` instead which works the same, but better (see below). This new name avoids confusion with the later-added `AblySubscriptions`.
+
+### New Features
+
+- `GraphQL::Pro::PusherSubscriptions` replaces `GraphQL::Pro::Subscriptions` and adds orphaned record cleanup. (No more dangling records in Redis.)
+
+## 1.13.1 (12 Mar 2020)
+
+- Use `nonce: true` when working with cursors in new stable connections
+
+## 1.13.0 (10 Feb 2020)
+
+### New Features
+
+- OperationStore supports a `redis:` backend
+- OperationStore supports an arbitrary `backend_class:` for persistence operations
+
+### Bug Fix
+
+- Use a loop when clearing Redis subscription state to avoid large stack traces #2701
+- Handle empty subscription keys when publishing updates #2061
+
+## 1.12.2 (22 Jan 2020)
+
+### Bug Fix
+
+- Improve backwards compat with OperationStore (Improve adding `.tracer`, use `.graphql_name` when indexing)
+
+## 1.12.1 (20 Jan 2020)
+
+### Bug Fix
+
+- Fix OperationStore on class-based schemas with query instrumenters that use the query string
+
+## 1.12.0 (20 Jan 2020)
+
+### Deprecations
+
+- `GraphQL::Pro::Monitoring` is deprecated; see Tracing for a replacement: https://graphql-ruby.org/queries/tracing.html
+- `GraphQL::Pro::Repository` is deprecated; see OperationStore for a replacement: https://graphql-ruby.org/operation_store/overview.html
+
+### New Features
+
+- New stable connection support based on GraphQL-Ruby 1.10's new pagination implementation. New classes provide better handling of `NULL` values in order-by columns and they can be applied on a field-by-field basis(`GraphQL::Pro::SqliteStableRelationConnection`, `GraphQL::Pro::MySQLStableRelationConnection`, `GraphQL::Pro::PostgresStableRelationConnection`).
+
+### Bug Fix
+
+- Add the Access query analyzer to class-based schemas
+
+## 1.11.0 (10 Oct 2019)
+
+### New Features
+
+- Forwards-compatibility for graphql 1.10.0
+- Support 1.10.0.pre1's input object argument `loads:` authorization
+
+## 1.10.8 (8 Oct 2019)
+
+### Bug Fix
+
+- Continue authorizing input object arguments
+- Use millisecond-aware string format for datetimes in cursors
+
+## 1.10.7 (22 Jul 2019)
+
+### Bug Fix
+
+- Support multiple subscriptions in one document
+
+## 1.10.6 (27 Jun 2019)
+
+### New Features
+
+- Support custom `#can_can_ability` methods on query context for CanCanIntegration
+- Support custom `#pundit_user` method on query context for PunditIntegration
+
+### Bug Fix
+
+- Fix off-by-one error when paginating backwards from the last item in a stable relation connection
+
 ## 1.10.5 (11 May 2019)
 
 ### New Features

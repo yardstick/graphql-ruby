@@ -29,7 +29,7 @@ The validation rules are part of the GraphQL specification and built into GraphQ
 
 ## Analysis Errors
 
-GraphQL-Ruby supports pre-execution analysis, which may return `"errors"` instead of running a query. You can find details in the {% internal_link "Analysis guide", "/queries/analysis" %}.
+GraphQL-Ruby supports pre-execution analysis, which may return `"errors"` instead of running a query. You can find details in the {% internal_link "Analysis guide", "queries/ast_analysis" %}.
 
 ## GraphQL Invariants
 
@@ -45,6 +45,10 @@ These constraints are part of the GraphQL specification, and when they are viola
 The GraphQL specification provides for a top-level `"errors"` key which may include information about errors during query execution. `"errors"` and `"data"` may _both_ be present in the case of a partial success.
 
 In your own schema, you can add to the `"errors"` key by raising `GraphQL::ExecutionError` (or subclasses of it) in your code. Read more in the {% internal_link "Execution Errors guide", "/errors/execution_errors" %}.
+
+## Handled Errors
+
+A schema can be configured to handle certain errors during field execution with handlers that you give it, using `rescue_from`. Read more in the {% internal_link "Error Handling guide", "/errors/error_handling" %}.
 
 ## Unhandled Errors (Crashes)
 

@@ -4,7 +4,7 @@ module StarWars
   # https://github.com/graphql/graphql-relay-js/blob/master/src/__tests__/starWarsSchema.js
 
   class Ship < GraphQL::Schema::Object
-    implements GraphQL::Relay::Node.interface
+    implements GraphQL::Types::Relay::Node
     global_id_field :id
     field :name, String, null: true
     # Test cyclical connection types:
@@ -13,7 +13,7 @@ module StarWars
 
   class BaseType < GraphQL::Schema::Object
     graphql_name "Base"
-    implements GraphQL::Relay::Node.interface
+    implements GraphQL::Types::Relay::Node
     global_id_field :id
     field :name, String, null: false
     def name
@@ -48,7 +48,11 @@ module StarWars
     field :total_count, Integer, null: true
 
     def total_count
-      object.nodes.count
+      if TESTING_INTERPRETER
+        object.items.count
+      else
+        object.nodes.count
+      end
     end
   end
 
@@ -64,7 +68,6 @@ module StarWars
 
   class CustomBaseEdgeType < GraphQL::Types::Relay::BaseEdge
     node_type(BaseType)
-    graphql_name "CustomBaseEdge"
     field :upcased_name, String, null: true
     field :upcased_parent_name, String, null: true
     field :edge_class_name, String, null: true
@@ -118,7 +121,7 @@ module StarWars
   end
 
   class Faction < GraphQL::Schema::Object
-    implements GraphQL::Relay::Node.interface
+    implements GraphQL::Types::Relay::Node
 
     field :id, ID, null: false
     def id
@@ -159,8 +162,8 @@ module StarWars
     field :shipsWithMaxPageSize, "Ships with max page size", max_page_size: 2, resolver: ShipsWithMaxPageSize
 
     field :bases, BasesConnectionWithTotalCountType, null: true, connection: true do
-      argument :nameIncludes, String, required: false
-      argument :complexOrder, Boolean, required: false
+      argument :name_includes, String, required: false
+      argument :complex_order, Boolean, required: false
     end
 
     def bases(name_includes: nil, complex_order: nil)
@@ -174,8 +177,8 @@ module StarWars
       all_bases
     end
 
-    field :basesClone, BaseConnection, null: true
-    field :basesByName, BaseConnection, null: true do
+    field :bases_clone, BaseConnection, null: true
+    field :bases_by_name, BaseConnection, null: true do
       argument :order, String, default_value: "name", required: false
     end
     def bases_by_name(order: nil)
@@ -201,8 +204,8 @@ module StarWars
     field :basesWithLargeMaxLimitRelation, BaseConnection, null: true, max_page_size: 1000, resolver_method: :all_bases
     field :basesWithoutNodes, BaseConnectionWithoutNodes, null: true, resolver_method: :all_bases_array
 
-    field :basesAsSequelDataset, BasesConnectionWithTotalCountType, null: true, connection: true, max_page_size: 1000 do
-      argument :nameIncludes, String, required: false
+    field :bases_as_sequel_dataset, BasesConnectionWithTotalCountType, null: true, connection: true, max_page_size: 1000 do
+      argument :name_includes, String, required: false
     end
 
     def bases_as_sequel_dataset(name_includes: nil)
@@ -306,8 +309,8 @@ module StarWars
 
   LazyNodesWrapper = Struct.new(:relation)
   class LazyNodesRelationConnection < GraphQL::Relay::RelationConnection
-    def initialize(wrapper, *args)
-      super(wrapper.relation, *args)
+    def initialize(wrapper, *args, **kwargs)
+      super(wrapper.relation, *args, **kwargs)
     end
 
     def edge_nodes
@@ -330,13 +333,13 @@ module StarWars
       StarWars::DATA["Faction"]["2"]
     end
 
-    field :largestBase, BaseType, null: true
+    field :largest_base, BaseType, null: true
 
     def largest_base
       Base.find(3)
     end
 
-    field :newestBasesGroupedByFaction, BaseConnection, null: true
+    field :newest_bases_grouped_by_faction, BaseConnection, null: true
 
     def newest_bases_grouped_by_faction
       Base
@@ -345,7 +348,7 @@ module StarWars
         .order('faction_id desc')
     end
 
-    field :basesWithNullName, BaseConnection, null: false
+    field :bases_with_null_name, BaseConnection, null: false
 
     def bases_with_null_name
       [OpenStruct.new(id: nil)]
@@ -390,7 +393,7 @@ module StarWars
       )
     end
 
-    field :batchedBase, BaseType, null: true do
+    field :batched_base, BaseType, null: true do
       argument :id, ID, required: true
     end
 
@@ -431,6 +434,9 @@ module StarWars
 
     if TESTING_INTERPRETER
       use GraphQL::Execution::Interpreter
+      use GraphQL::Analysis::AST
+      use GraphQL::Pagination::Connections
+      connections.add(LazyNodesWrapper, LazyNodesRelationConnection)
     end
 
     def self.resolve_type(type, object, ctx)
@@ -453,7 +459,7 @@ module StarWars
     end
 
     def self.id_from_object(object, type, ctx)
-      GraphQL::Schema::UniqueWithinType.encode(type.name, object.id)
+      GraphQL::Schema::UniqueWithinType.encode(type.graphql_name, object.id)
     end
 
     lazy_resolve(LazyWrapper, :value)

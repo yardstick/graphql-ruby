@@ -5,19 +5,37 @@ search: true
 section: Queries
 title: Ahead-of-Time AST Analysis
 desc: Check incoming query strings and reject them if they don't pass your checks
-index: 13
+index: 1
+redirect_from:
+  - /queries/analysis/
 ---
 
-GraphQL-Ruby 1.9.0 includes a new way to do Ahead-of-Time analysis for your queries. Eventually, it will become the
-default.
+You can do ahead-of-time analysis for your queries.
 
-The new analysis runs on query ASTs instead of the GraphQL Ruby internal representation, which means some of the things you used to get for free need to be done in analyzers instead.
+The primitive for analysis is {{ "GraphQL::Analysis::AST::Analyzer" | api_doc }}. Analyzers must inherit from this base class and implement the desired methods for analysis.
 
-The new primitive for analysis is {{ "GraphQL::Analysis::AST::Analyzer" | api_doc }}. New analyzers must inherit from this base class and implement the desired methods for analysis.
+### Using Analyzers
+
+Query analyzers are added to the schema with `query_analyzer`; however, to use the new analysis engine, you must opt in by using `use GraphQL::Analysis::AST`, for example:
+
+```ruby
+class MySchema < GraphQL::Schema
+  use GraphQL::Analysis::AST
+  query_analyzer MyQueryAnalyzer
+end
+```
+
+Pass the **class** (and not an _instance_) of your analyzer. The analysis engine will take care of instantiating your analyzers with the query.
 
 ## Analyzer API
 
-Analyzers respond to methods similar to AST visitors:
+Analyzers respond to methods similar to AST visitors. They're named like `on_enter_#{ast_node}` and `on_leave_#{ast_node}`. Methods are called with three arguments:
+
+- `node`: The current AST node (being entered or left)
+- `parent`: The AST node which preceeds this one in the tree
+- `visitor`: A {{ "GraphQL::Analysis::AST::Visitor" | api_doc }} which is managing this analysis run
+
+For example:
 
 ```ruby
 class BasicCounterAnalyzer < GraphQL::Analysis::AST::Analyzer
@@ -27,26 +45,22 @@ class BasicCounterAnalyzer < GraphQL::Analysis::AST::Analyzer
     @arguments = Set.new
   end
 
-  # Visitor are all defined on the AST::Analyzer base class
+  # Visitors are all defined on the AST::Analyzer base class
   # We override them for custom analyzers.
   def on_leave_field(node, _parent, _visitor)
     @fields.add(node.name)
   end
 
-  def on_leave_argument(node, _parent, _visitor)
-    @arguments.add(node.name)
-  end
-
   def result
-    [@fields, @arguments]
+    # Do something with the gathered result.
+    Analytics.log(@fields)
   end
 end
 ```
 
-In this example, we counted every field and argument, no matter if they were on fragment definitions
-or if they were skipped by directives. In the old API, this used to be handled automatically because
-the internal representation of the query took care of these concerns. With the new API, we can use helper
-methods to help us achieve this:
+In this example, we counted every field, no matter if it was on fragment definitions
+or if it was skipped by directives. If we want to detect those contexts, we can use helper
+methods:
 
 ```ruby
 class BasicFieldAnalyzer < GraphQL::Analysis::AST::Analyzer
@@ -55,7 +69,7 @@ class BasicFieldAnalyzer < GraphQL::Analysis::AST::Analyzer
     @fields = Set.new
   end
 
-  # Visitor are all defined on the AST::Analyzer base class
+  # Visitors are all defined on the AST::Analyzer base class
   # We override them for custom analyzers.
   def on_leave_field(node, _parent, visitor)
     if visitor.skipping? || visitor.visiting_fragment_definition?
@@ -66,22 +80,17 @@ class BasicFieldAnalyzer < GraphQL::Analysis::AST::Analyzer
     end
   end
 
-  # We want to visit fragment spreads as soon as we hit them
-  # instead of visiting the definitions. The visitor provides helper
-  # methods to achieve that.
-  def on_enter_fragment_spread(node, parent, visitor)
-    visitor.enter_fragment_spread_inline(node)
-  end
-
-  def on_leave_fragment_definition(node, parent, visitor)
-    visitor.leave_fragment_spread_inline(node)
-  end
-
   def result
-    @fields
+    Analytics.log(@fields)
   end
 end
 ```
+
+See {{ "GraphQL::Analysis::AST::Visitor" | api_doc }} for more information about the `visitor` object.
+
+### Field Arguments
+
+Usually, analyzers will use `on_enter_field` and `on_leave_field` to process queries. To get a field's arguments during analysis, use `visitor.query.arguments_for(node, visitor.field_definition)` ({{ "GraphQL::Query#arguments_for" | api_doc }}). That method returns coerced argument values and normalizes argument literals and variable values.
 
 ### Errors
 
@@ -110,7 +119,7 @@ class BasicFieldAnalyzer < GraphQL::Analysis::AST::Analyzer
   # Use the analyze? method to enable or disable a certain analyzer
   # at query time.
   def analyze?
-    !!query.context[:should_analyze]
+    !!subject.context[:should_analyze]
   end
 
   def on_leave_field(node, _parent, visitor)
@@ -123,15 +132,10 @@ class BasicFieldAnalyzer < GraphQL::Analysis::AST::Analyzer
 end
 ```
 
-### Using Analyzers
+## Analyzing Multiplexes
 
-The new query analyzers are added to the schema the same one as before with `query_analyzer`. However, to use the new analysis engine, you must opt in by using `use GraphQL::Analysis::AST`, for example:
+Analyzers are initialized with the _unit of analysis_, available as `subject`.
 
-```ruby
-class MySchema < GraphQL::Schema
-  use GraphQL::Analysis::AST
-  query_analyzer MyQueryAnalyzer
-end
-```
+When analyzers are hooked up to multiplexes, `query` is `nil`, but `multiplex` returns the subject of analysis. You can use `visitor.query` inside visit methods to reference the query that owns the current AST node.
 
-**Make sure you pass the class and not an instance of your analyzer. The new analysis engine will take care of instantiating your analyzers with the query**.
+Note that some built-in analyzers (eg `AST::MaxQueryDepth`) support multiplexes even though `Query` is in their name.

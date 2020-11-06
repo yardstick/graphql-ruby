@@ -4,6 +4,10 @@ module GraphQL
     class Member
       # @api private
       module BuildType
+        if !String.method_defined?(:match?)
+          using GraphQL::StringMatchBackport
+        end
+
         LIST_TYPE_ERROR = "Use an array of [T] or [T, null: true] for list types; other arrays are not supported"
 
         module_function
@@ -64,6 +68,8 @@ module GraphQL
             else
               raise ArgumentError, LIST_TYPE_ERROR
             end
+          when GraphQL::Schema::NonNull, GraphQL::Schema::List
+            type_expr
           when Module
             # This is a way to check that it's the right kind of module:
             if type_expr.respond_to?(:graphql_definition)
@@ -72,12 +78,14 @@ module GraphQL
               # Eg `String` => GraphQL::STRING_TYPE
               parse_type(type_expr.name, null: true)
             end
+          when Proc
+            parse_type(type_expr.call, null: true)
           when false
             raise ArgumentError, "Received `false` instead of a type, maybe a `!` should be replaced with `null: true` (for fields) or `required: true` (for arguments)"
           end
 
           if return_type.nil?
-            raise "Unexpected type input: #{type_expr} (#{type_expr.class})"
+            raise "Unexpected type input: #{type_expr.inspect} (#{type_expr.class})"
           end
 
           # Apply list_type first, that way the
@@ -158,10 +166,16 @@ module GraphQL
         end
 
         def underscore(string)
-          string
-            .gsub(/([A-Z]+)([A-Z][a-z])/,'\1_\2') # URLDecoder -> URL_Decoder
-            .gsub(/([a-z\d])([A-Z])/,'\1_\2')     # someThing -> some_Thing
-            .downcase
+          if string.match?(/\A[a-z_]+\Z/)
+            return string
+          end
+          string2 = string.dup
+
+          string2.gsub!(/([A-Z]+)([A-Z][a-z])/,'\1_\2') # URLDecoder -> URL_Decoder
+          string2.gsub!(/([a-z\d])([A-Z])/,'\1_\2')     # someThing -> some_Thing
+          string2.downcase!
+
+          string2
         end
       end
     end

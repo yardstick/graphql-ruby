@@ -1,47 +1,16 @@
 # frozen_string_literal: true
 module GraphQL
-  # Used for defined arguments ({Field}, {InputObjectType})
-  #
-  # {#name} must be a String.
-  #
-  # @example defining an argument for a field
-  #   GraphQL::Field.define do
-  #     # ...
-  #     argument :favoriteFood, types.String, "Favorite thing to eat", default_value: "pizza"
-  #   end
-  #
-  # @example defining an argument for an {InputObjectType}
-  #   GraphQL::InputObjectType.define do
-  #     argument :newName, !types.String
-  #   end
-  #
-  # @example defining an argument with a `prepare` function
-  #   GraphQL::Field.define do
-  #     argument :userId, types.ID, prepare: ->(userId) do
-  #       User.find_by(id: userId)
-  #     end
-  #   end
-  #
-  # @example returning an {ExecutionError} from a `prepare` function
-  #   GraphQL::Field.define do
-  #     argument :date do
-  #       type !types.String
-  #       prepare ->(date) do
-  #         return GraphQL::ExecutionError.new("Invalid date format") unless DateValidator.valid?(date)
-  #         Time.zone.parse(date)
-  #       end
-  #     end
-  #   end
-
+  # @api deprecated
   class Argument
     include GraphQL::Define::InstanceDefinable
-    accepts_definitions :name, :type, :description, :default_value, :as, :prepare
+    accepts_definitions :name, :type, :description, :default_value, :as, :prepare, :method_access, :deprecation_reason
     attr_reader :default_value
-    attr_accessor :description, :name, :as
+    attr_accessor :description, :name, :as, :deprecation_reason
     attr_accessor :ast_node
+    attr_accessor :method_access
     alias :graphql_name :name
 
-    ensure_defined(:name, :description, :default_value, :type=, :type, :as, :expose_as, :prepare)
+    ensure_defined(:name, :description, :default_value, :type=, :type, :as, :expose_as, :prepare, :method_access, :deprecation_reason)
 
     # @api private
     module DefaultPrepare
@@ -58,6 +27,11 @@ module GraphQL
 
     def default_value?
       !!@has_default_value
+    end
+
+    def method_access?
+      # Treat unset as true -- only `false` should override
+      @method_access != false
     end
 
     def default_value=(new_default_value)
@@ -107,6 +81,10 @@ module GraphQL
       @prepare_proc = BackwardsCompatibility.wrap_arity(prepare_proc, from: 1, to: 2, name: "Argument#prepare(value, ctx)")
     end
 
+    def type_class
+      metadata[:type_class]
+    end
+
     NO_DEFAULT_VALUE = Object.new
     # @api private
     def self.from_dsl(name, type_or_argument = nil, description = nil, default_value: NO_DEFAULT_VALUE, as: nil, prepare: DefaultPrepare, **kwargs, &block)
@@ -128,9 +106,9 @@ module GraphQL
       end
 
       if type_or_argument.is_a?(GraphQL::Argument)
-        type_or_argument.redefine(kwargs, &block)
+        type_or_argument.redefine(**kwargs, &block)
       else
-        GraphQL::Argument.define(kwargs, &block)
+        GraphQL::Argument.define(**kwargs, &block)
       end
     end
 

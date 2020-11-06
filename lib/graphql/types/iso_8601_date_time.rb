@@ -1,7 +1,10 @@
 # frozen_string_literal: true
+
+require 'time'
+
 module GraphQL
   module Types
-    # This scalar takes `DateTime`s and transmits them as strings,
+    # This scalar takes `Time`s and transmits them as strings,
     # using ISO 8601 format.
     #
     # Use it for fields or arguments as follows:
@@ -29,19 +32,33 @@ module GraphQL
         @time_precision = value
       end
 
-      # @param value [DateTime]
+      # @param value [Time,Date,DateTime,String]
       # @return [String]
       def self.coerce_result(value, _ctx)
-        value.iso8601(time_precision)
+        case value
+        when Date
+          return value.to_time.iso8601(time_precision)
+        when ::String
+          return Time.parse(value).iso8601(time_precision)
+        else
+          # Time, DateTime or compatible is given:
+          return value.iso8601(time_precision)
+        end
+      rescue StandardError => error
+        raise GraphQL::Error, "An incompatible object (#{value.class}) was given to #{self}. Make sure that only Times, Dates, DateTimes, and well-formatted Strings are used with this type. (#{error.message})"
       end
 
       # @param str_value [String]
-      # @return [DateTime]
+      # @return [Time]
       def self.coerce_input(str_value, _ctx)
-        DateTime.iso8601(str_value)
-      rescue ArgumentError
-        # Invalid input
-        nil
+        Time.iso8601(str_value)
+      rescue ArgumentError, TypeError
+        begin
+          Date.iso8601(str_value).to_time
+        rescue ArgumentError, TypeError
+          # Invalid input
+          nil
+        end
       end
     end
   end

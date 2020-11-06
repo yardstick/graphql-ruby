@@ -71,6 +71,17 @@ describe GraphQL::Analysis::AST do
     end
   end
 
+  class AstArguments < GraphQL::Analysis::AST::Analyzer
+    def on_enter_argument(node, parent, visitor)
+      @argument = visitor.argument_definition
+      @previous_argument = visitor.previous_argument_definition
+    end
+
+    def result
+      [@argument, @previous_argument]
+    end
+  end
+
   describe "using the AST analysis engine" do
     let(:schema) do
       query_type = Class.new(GraphQL::Schema::Object) do
@@ -137,11 +148,11 @@ describe GraphQL::Analysis::AST do
       }
     |}
 
-    describe "without a selected operation" do
+    describe "without a valid operation" do
       let(:query_string) {%|
         # A comment
-        # And nothing else
-        # Should not break
+        # is an invalid operation
+         # Should break
       |}
 
       it "bails early when there is no selected operation to be executed" do
@@ -176,7 +187,23 @@ describe GraphQL::Analysis::AST do
 
         it "it runs the analyzer" do
           prev_field = reduce_result.first
-          assert_equal "__Schema.types", prev_field.metadata[:type_class].path
+          assert_equal "__Schema.types", prev_field.path
+        end
+      end
+
+      describe "Visitor#argument_definition" do
+        let(:analyzers) { [AstArguments] }
+        let(:query) do
+          GraphQL::Query.new(
+            Dummy::Schema,
+            '{ searchDairy(product: [{ source: "SHEEP" }]) { ... on Cheese { id } } }'
+          )
+        end
+
+        it "it runs the analyzer" do
+          argument, prev_argument = reduce_result.first
+          assert_equal "DairyProductInput.source", argument.path
+          assert_equal "Query.searchDairy.product", prev_argument.path
         end
       end
     end
@@ -184,10 +211,10 @@ describe GraphQL::Analysis::AST do
     it "calls the defined analyzers" do
       collected_types, node_counts = reduce_result
       expected_visited_types = [
-        Dummy::DairyAppQuery.graphql_definition,
-        Dummy::Cheese.graphql_definition,
-        GraphQL::INT_TYPE,
-        GraphQL::STRING_TYPE
+        Dummy::DairyAppQuery,
+        Dummy::Cheese,
+        GraphQL::Types::Int,
+        GraphQL::Types::String
       ]
       assert_equal expected_visited_types, collected_types
 

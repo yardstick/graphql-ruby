@@ -19,9 +19,11 @@ class GraphQLGeneratorsInstallGeneratorTest < Rails::Generators::TestCase
 
     assert_file "app/graphql/types/.keep"
     assert_file "app/graphql/mutations/.keep"
-    ["base_object", "base_input_object", "base_enum", "base_scalar", "base_union", "base_interface"].each do |base_type|
+    assert_file "app/graphql/mutations/base_mutation.rb"
+    ["base_input_object", "base_enum", "base_scalar", "base_union"].each do |base_type|
       assert_file "app/graphql/types/#{base_type}.rb"
     end
+
     expected_query_route = %|post "/graphql", to: "graphql#execute"|
     expected_graphiql_route = %|
   if Rails.env.development?
@@ -42,10 +44,28 @@ class GraphQLGeneratorsInstallGeneratorTest < Rails::Generators::TestCase
 class DummySchema < GraphQL::Schema
   mutation(Types::MutationType)
   query(Types::QueryType)
+
+  # Opt in to the new runtime (default in future graphql-ruby versions)
+  use GraphQL::Execution::Interpreter
+  use GraphQL::Analysis::AST
+
+  # Add built-in connections for pagination
+  use GraphQL::Pagination::Connections
 end
 RUBY
     assert_file "app/graphql/dummy_schema.rb", expected_schema
 
+    expected_base_mutation = <<-RUBY
+module Mutations
+  class BaseMutation < GraphQL::Schema::RelayClassicMutation
+    argument_class Types::BaseArgument
+    field_class Types::BaseField
+    input_object_class Types::BaseInputObject
+    object_class Types::BaseObject
+  end
+end
+RUBY
+    assert_file "app/graphql/mutations/base_mutation.rb", expected_base_mutation
 
     expected_query_type = <<-RUBY
 module Types
@@ -65,6 +85,42 @@ RUBY
 
     assert_file "app/graphql/types/query_type.rb", expected_query_type
     assert_file "app/controllers/graphql_controller.rb", EXPECTED_GRAPHQLS_CONTROLLER
+    expected_base_field = <<-RUBY
+module Types
+  class BaseField < GraphQL::Schema::Field
+    argument_class Types::BaseArgument
+  end
+end
+RUBY
+    assert_file "app/graphql/types/base_field.rb", expected_base_field
+
+    expected_base_argument = <<-RUBY
+module Types
+  class BaseArgument < GraphQL::Schema::Argument
+  end
+end
+RUBY
+    assert_file "app/graphql/types/base_argument.rb", expected_base_argument
+
+    expected_base_object = <<-RUBY
+module Types
+  class BaseObject < GraphQL::Schema::Object
+    field_class Types::BaseField
+  end
+end
+RUBY
+    assert_file "app/graphql/types/base_object.rb", expected_base_object
+
+    expected_base_interface = <<-RUBY
+module Types
+  module BaseInterface
+    include GraphQL::Schema::Interface
+
+    field_class Types::BaseField
+  end
+end
+RUBY
+    assert_file "app/graphql/types/base_interface.rb", expected_base_interface
   end
 
   test "it allows for a user-specified install directory" do
@@ -133,10 +189,33 @@ RUBY
     assert_file "app/controllers/graphql_controller.rb", /CustomSchema\.execute/
   end
 
+  test "it can add GraphQL Playground as an IDE through the --playground option" do
+    run_generator(["--playground"])
+
+    assert_file "Gemfile" do |contents|
+      assert_includes contents, "graphql_playground-rails"
+    end
+
+    expected_playground_route = %|
+  if Rails.env.development?
+    mount GraphqlPlayground::Rails::Engine, at: "/playground", graphql_path: "/graphql"
+  end
+|
+
+    assert_file "config/routes.rb" do |contents|
+      assert_includes contents, expected_playground_route
+    end
+  end
+
   EXPECTED_GRAPHQLS_CONTROLLER = <<-'RUBY'
 class GraphqlController < ApplicationController
+  # If accessing from outside this domain, nullify the session
+  # This allows for outside API access while preventing CSRF attacks,
+  # but you'll have to authenticate your user separately
+  # protect_from_forgery with: :null_session
+
   def execute
-    variables = ensure_hash(params[:variables])
+    variables = prepare_variables(params[:variables])
     query = params[:query]
     operation_name = params[:operationName]
     context = {
@@ -152,21 +231,23 @@ class GraphqlController < ApplicationController
 
   private
 
-  # Handle form data, JSON body, or a blank value
-  def ensure_hash(ambiguous_param)
-    case ambiguous_param
+  # Handle variables in form data, JSON body, or a blank value
+  def prepare_variables(variables_param)
+    case variables_param
     when String
-      if ambiguous_param.present?
-        ensure_hash(JSON.parse(ambiguous_param))
+      if variables_param.present?
+        JSON.parse(variables_param) || {}
       else
         {}
       end
-    when Hash, ActionController::Parameters
-      ambiguous_param
+    when Hash
+      variables_param
+    when ActionController::Parameters
+      variables_param.to_unsafe_hash # GraphQL-Ruby will validate name and type of incoming variables.
     when nil
       {}
     else
-      raise ArgumentError, "Unexpected parameter: #{ambiguous_param}"
+      raise ArgumentError, "Unexpected parameter: #{variables_param}"
     end
   end
 
@@ -174,16 +255,23 @@ class GraphqlController < ApplicationController
     logger.error e.message
     logger.error e.backtrace.join("\n")
 
-    render json: { error: { message: e.message, backtrace: e.backtrace }, data: {} }, status: 500
+    render json: { errors: [{ message: e.message, backtrace: e.backtrace }], data: {} }, status: 500
   end
 end
 RUBY
 
   EXPECTED_RELAY_BATCH_SCHEMA = <<-RUBY
 class DummySchema < GraphQL::Schema
-
   mutation(Types::MutationType)
   query(Types::QueryType)
+
+  # Opt in to the new runtime (default in future graphql-ruby versions)
+  use GraphQL::Execution::Interpreter
+  use GraphQL::Analysis::AST
+
+  # Add built-in connections for pagination
+  use GraphQL::Pagination::Connections
+
   # Relay Object Identification:
 
   # Return a string UUID for `object`
@@ -208,7 +296,7 @@ class DummySchema < GraphQL::Schema
   def self.resolve_type(type, obj, ctx)
     # TODO: Implement this function
     # to return the correct type for `obj`
-    raise(NotImplementedError)
+    raise(GraphQL::RequiredImplementationMissingError)
   end
 
   # GraphQL::Batch setup:

@@ -122,6 +122,8 @@ describe GraphQL::Schema::Validation do
       GraphQL::ObjectType.define do
         name "InvalidInterfaceMember"
         interfaces [:not_an_interface]
+
+        field :foo, :string
       end
     }
 
@@ -132,12 +134,25 @@ describe GraphQL::Schema::Validation do
       end
     }
 
+    let(:invalid_object_without_fields) {
+      GraphQL::ObjectType.define do
+        name "InvalidObjectWithoutFields"
+      end
+    }
+
     it "requires an Array for interfaces" do
-      assert_error_includes invalid_interface_member_object, "must contain GraphQL::InterfaceType, not Symbol"
+      assert_error_includes invalid_interface_member_object, "field \"foo\" type must return GraphQL::BaseType, not Symbol (:string)"
     end
 
     it "validates the fields" do
       assert_error_includes invalid_field_object, "must return GraphQL::BaseType, not Symbol"
+    end
+
+    it "validates that Object types define at least one field" do
+      assert_error_includes(
+        invalid_object_without_fields,
+        "InvalidObjectWithoutFields must define at least 1 field. 0 defined."
+      )
     end
 
     it "requires interfaces to be implemented" do
@@ -232,7 +247,7 @@ describe GraphQL::Schema::Validation do
     }
 
     it "requires an array of ObjectTypes for possible_types" do
-      assert_error_includes non_array_union, "must be an Array of GraphQL::ObjectType, not a #{integer_class_name}"
+      assert_error_includes non_array_union, "must contain GraphQL::ObjectType, not #{integer_class_name}"
 
       assert_error_includes non_object_type_union, "must contain GraphQL::ObjectType, not GraphQL::InterfaceType"
     end
@@ -261,12 +276,21 @@ describe GraphQL::Schema::Validation do
       end
     }
 
+    let(:no_arguments_input) {
+      GraphQL::InputObjectType.define do
+        name "NoArguments"
+      end
+    }
     it "requires {String => Argument} arguments" do
       assert_error_includes invalid_arguments_input, "map String => GraphQL::Argument, not #{integer_class_name} => Symbol"
     end
 
     it "applies validation to its member Arguments" do
       assert_error_includes invalid_argument_member_input, "default value [\"xyz\"] is not valid for type Float"
+    end
+
+    it "requires one argument" do
+      assert_error_includes no_arguments_input, "must define at least 1 argument"
     end
   end
 
@@ -297,9 +321,9 @@ describe GraphQL::Schema::Validation do
       end
     }
 
-    let(:invalid_default_argument_for_non_null_argument) {
+    let(:default_argument_for_non_null_argument) {
       GraphQL::Argument.define do
-        name "InvalidDefault"
+        name "ValidDefault"
         type !GraphQL::INT_TYPE
         default_value 1
       end
@@ -320,12 +344,36 @@ describe GraphQL::Schema::Validation do
       end
     }
 
+    let(:deprecated_optional_argument) {
+      GraphQL::Argument.define do
+        name "Something"
+        deprecation_reason "Don't use me"
+        type GraphQL::INT_TYPE
+      end
+    }
+
+    let(:deprecated_required_argument) {
+      GraphQL::Argument.define do
+        name "Something"
+        deprecation_reason "Don't use me"
+        type !GraphQL::INT_TYPE
+      end
+    }
+
+    let(:invalid_deprecation_reason_argument) {
+      GraphQL::Argument.define do
+        name "Something"
+        deprecation_reason 1
+        type GraphQL::INT_TYPE
+      end
+    }
+
     it "requires the type is a Base type" do
       assert_error_includes untyped_argument, "must be a valid input type (Scalar or InputObject), not Symbol"
     end
 
-    it "does not allow default values for non-null argument" do
-      assert_error_includes invalid_default_argument_for_non_null_argument, 'Variable InvalidDefault of type "Int!" is required and will not use the default value. Perhaps you meant to use type "Int".'
+    it "allows default values for non-null argument" do
+      assert_nil GraphQL::Schema::Validation.validate(default_argument_for_non_null_argument)
     end
 
     it "cannot use reserved name" do
@@ -334,6 +382,18 @@ describe GraphQL::Schema::Validation do
 
     it "allows null default value for nullable argument" do
       assert_nil GraphQL::Schema::Validation.validate(null_default_value)
+    end
+
+    it "allows deprecated optional arguments" do
+      assert_nil GraphQL::Schema::Validation.validate(deprecated_optional_argument)
+    end
+
+    it "disallows deprecated required arguments" do
+      assert_error_includes deprecated_required_argument, "must be optional because it's deprecated"
+    end
+
+    it "disallows non-string deprecation reasons" do
+      assert_error_includes invalid_deprecation_reason_argument, "deprecation_reason must return String or NilClass, not #{integer_class_name} (1)"
     end
   end
 
@@ -347,7 +407,7 @@ describe GraphQL::Schema::Validation do
       end
     }
     it "finds instrumenters missing methods" do
-      err = assert_raises(NotImplementedError) { schema }
+      err = assert_raises(GraphQL::RequiredImplementationMissingError) { schema }
       assert_includes err.message, "before_query(query)"
       assert_includes err.message, "instrument(type, field)"
     end

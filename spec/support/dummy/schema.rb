@@ -88,6 +88,10 @@ module Dummy
     implements AnimalProduct
     implements LocalProduct
 
+    def self.authorized?(obj, ctx)
+      -> { true }
+    end
+
     field :id, Int, "Unique identifier", null: false
     field :flavor, String, "Kind of Cheese", null: false
     field :origin, String, "Place the cheese comes from", null: false
@@ -100,7 +104,7 @@ module Dummy
       # metadata test
       joins [:cheeses, :milks]
       argument :source, [DairyAnimal], required: true
-      argument :nullableSource, [DairyAnimal], required: false, default_value: [1]
+      argument :nullable_source, [DairyAnimal], required: false, default_value: [1]
     end
 
     def similar_cheese(source:, nullable_source:)
@@ -125,7 +129,7 @@ module Dummy
 
     # Keywords can be used for definition methods
     field :fat_content,
-      type: GraphQL::FLOAT_TYPE,
+      type: Float,
       null: false,
       description: "Percentage which is milkfat",
       deprecation_reason: "Diet fashion has changed"
@@ -161,9 +165,13 @@ module Dummy
     possible_types Milk
   end
 
+  class Aspartame < BaseObject; end
+
   module Sweetener
     include BaseInterface
     field :sweetness, Integer, null: true
+
+    orphan_types Aspartame
   end
 
   # No actual data; This type is an "orphan", only accessible through Interfaces
@@ -172,6 +180,14 @@ module Dummy
     field :flower_type, String, "What flower this honey came from", null: true
     implements Edible
     implements AnimalProduct
+    implements Sweetener
+  end
+
+  # No actual data; Same as "Honey", but only accessible through an interface's orphans
+  class Aspartame < BaseObject
+    description "Sugar substitute with an off-flavor aftertaste"
+    field :manufacturer, String, "What manufacturer this aspartame came from", null: true
+    implements Edible
     implements Sweetener
   end
 
@@ -248,6 +264,7 @@ module Dummy
     argument :fat_content, Float, required: false, description: "How much fat it has", default_value: 0.3
     argument :organic, Boolean, required: false, default_value: false
     argument :order_by, ResourceOrder, required: false, default_value: { direction: "ASC" }, camelize: false
+    argument :old_source, String, required: false, deprecation_reason: "No longer supported"
   end
 
   class DeepNonNull < BaseObject
@@ -328,6 +345,7 @@ module Dummy
     field :dairy, resolver: GetSingleton.build(type: Dairy, data: DAIRY)
     field :from_source, [Cheese, null: true], null: true, description: "Cheese from source" do
       argument :source, DairyAnimal, required: false, default_value: 1
+      argument :old_source, String, required: false, deprecation_reason: "No longer supported"
     end
     def from_source(source:)
       CHEESES.values.select { |c| c.source == source }
@@ -404,6 +422,14 @@ module Dummy
       ]
     end
 
+    field :multiple_errors_on_non_nullable_list_field, [String], null: false
+    def multiple_errors_on_non_nullable_list_field
+      [
+        GraphQL::ExecutionError.new("The first error message for a field defined to return a list of strings."),
+        GraphQL::ExecutionError.new("The second error message for a field defined to return a list of strings.")
+      ]
+    end
+
     field :execution_error_with_options, Integer, null: true
     def execution_error_with_options
       GraphQL::ExecutionError.new("Permission Denied!", options: { "code" => "permission_denied" })
@@ -411,7 +437,7 @@ module Dummy
 
     field :execution_error_with_extensions, Integer, null: true
     def execution_error_with_extensions
-      GraphQL::ExecutionError.new("Permission Denied!", extensions: { "code" => "permission_denied" })
+      GraphQL::ExecutionError.new("Permission Denied!", extensions: { code: "permission_denied" })
     end
 
     # To test possibly-null fields
@@ -445,7 +471,7 @@ module Dummy
   GLOBAL_VALUES = []
 
   class ReplaceValuesInput < BaseInputObject
-    argument :values, [Integer], required: true
+    argument :values, [Integer], required: true, method_access: false
   end
 
   class DairyAppMutation < BaseObject
@@ -459,7 +485,7 @@ module Dummy
       GLOBAL_VALUES
     end
 
-    field :replaceValues, [Integer], "Replace the global array with new values", null: false do
+    field :replace_values, [Integer], "Replace the global array with new values", null: false do
       argument :input, ReplaceValuesInput, required: true
     end
 
@@ -480,13 +506,12 @@ module Dummy
     mutation DairyAppMutation
     subscription Subscription
     max_depth 5
-    # TODO why is `.graphql_definition` required here?
-    orphan_types Honey, Beverage.graphql_definition
+    orphan_types Honey, Beverage
 
-    rescue_from(NoSuchDairyError) { |err| err.message  }
+    rescue_from(NoSuchDairyError) { |err| raise GraphQL::ExecutionError, err.message  }
 
     def self.resolve_type(type, obj, ctx)
-      Schema.types[obj.class.name.split("::").last]
+      -> { Schema.types[obj.class.name.split("::").last] }
     end
 
     # This is used to confirm that the hook is called:
@@ -500,9 +525,10 @@ module Dummy
       end
     end
 
-    if TESTING_INTERPRETER
-      use GraphQL::Execution::Interpreter
-    end
+    use GraphQL::Execution::Interpreter
+    use GraphQL::Analysis::AST
+    use GraphQL::Execution::Errors
+    lazy_resolve(Proc, :call)
   end
 
   class AdminSchema < GraphQL::Schema

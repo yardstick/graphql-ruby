@@ -39,7 +39,7 @@ An unencrypted ID generator is provided in the gem. It uses `Base64` to encode v
 class MySchema < GraphQL::Schema
   # Create UUIDs by joining the type name & ID, then base64-encoding it
   def self.id_from_object(object, type_definition, query_ctx)
-    GraphQL::Schema::UniqueWithinType.encode(type_definition.name, object.id)
+    GraphQL::Schema::UniqueWithinType.encode(type_definition.graphql_name, object.id)
   end
 
   def self.object_from_id(id, query_ctx)
@@ -55,12 +55,12 @@ end
 
 One requirement for Relay's object management is implementing the `"Node"` interface.
 
-To implement the node interface, add {{ "GraphQL::Relay::Node.interface" | api_doc }} to your definition:
+To implement the node interface, add {{ "GraphQL::Types::Relay::Node" | api_doc }} to your definition:
 
 ```ruby
 class Types::PostType < GraphQL::Schema::Object
   # Implement the "Node" interface for Relay
-  implements GraphQL::Relay::Node.interface
+  implements GraphQL::Types::Relay::Node
   # ...
 end
 ```
@@ -107,7 +107,7 @@ You should also provide a root-level `node` field so that Relay can refetch obje
 ```ruby
 class Types::QueryType < GraphQL::Schema::Object
   # Used by Relay to lookup objects by UUID:
-  field :node, field: GraphQL::Relay::Node.field
+  add_field(GraphQL::Types::Relay::NodeField)
   # ...
 end
 ```
@@ -117,9 +117,9 @@ end
 You can also provide a root-level `nodes` field so that Relay can refetch objects by IDs. Similarly, it is provided as `GraphQL::Relay::Node.plural_field`:
 
 ```ruby
-class QueryType < GraphQL::Schema::Object
+class Types::QueryType < GraphQL::Schema::Object
   # Fetches a list of objects given a list of IDs
-  field :nodes, field: GraphQL::Relay::Node.plural_field
+  add_field(GraphQL::Types::Relay::NodesField)
   # ...
 end
 ```

@@ -14,25 +14,30 @@ module GraphQL
     class PossibleTypes
       def initialize(schema)
         @object_types = schema.types.values.select { |type| type.kind.object? }
-
-        @interface_implementers = Hash.new do |hash, key|
-          hash[key] = @object_types.select { |type| type.interfaces.include?(key) }.sort_by(&:name)
+        @interface_implementers = Hash.new do |h1, ctx|
+          h1[ctx] = Hash.new do |h2, int_type|
+            h2[int_type] = @object_types.select { |type| type.interfaces(ctx).include?(int_type) }.sort_by(&:name)
+          end
         end
       end
 
-      def possible_types(type_defn)
+      def possible_types(type_defn, ctx)
         case type_defn
         when Module
-          possible_types(type_defn.graphql_definition)
+          possible_types(type_defn.graphql_definition, ctx)
         when GraphQL::UnionType
-          type_defn.possible_types
+          type_defn.possible_types(ctx)
         when GraphQL::InterfaceType
-          @interface_implementers[type_defn]
+          interface_implementers(ctx, type_defn)
         when GraphQL::BaseType
           [type_defn]
         else
           raise "Unexpected possible_types object: #{type_defn.inspect}"
         end
+      end
+
+      def interface_implementers(ctx, type_defn)
+        @interface_implementers[ctx][type_defn]
       end
     end
   end

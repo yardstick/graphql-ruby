@@ -7,11 +7,14 @@ module GraphQL
         include GraphQL::Schema::Member::CachedGraphQLDefinition
         include GraphQL::Relay::TypeExtensions
         include GraphQL::Schema::Member::BaseDSLMethods
+        # ConfigurationExtension's responsibilities are in `def included` below
         include GraphQL::Schema::Member::TypeSystemHelpers
         include GraphQL::Schema::Member::HasFields
         include GraphQL::Schema::Member::HasPath
         include GraphQL::Schema::Member::RelayShortcuts
         include GraphQL::Schema::Member::Scoped
+        include GraphQL::Schema::Member::HasAstNode
+        include GraphQL::Schema::Member::HasUnresolvedTypeError
 
         # Methods defined in this block will be:
         # - Added as class methods to this interface
@@ -20,24 +23,27 @@ module GraphQL
           self::DefinitionMethods.module_eval(&block)
         end
 
-        # The interface is visible if any of its possible types are visible
+        # @see {Schema::Warden} hides interfaces without visible implementations
         def visible?(context)
-          context.schema.possible_types(self).each do |type|
-            if context.schema.visible?(type, context)
+          true
+        end
+
+        # The interface is accessible if any of its possible types are accessible
+        def accessible?(context)
+          context.schema.possible_types(self, context).each do |type|
+            if context.schema.accessible?(type, context)
               return true
             end
           end
           false
         end
 
-        # The interface is accessible if any of its possible types are accessible
-        def accessible?(context)
-          context.schema.possible_types(self).each do |type|
-            if context.schema.accessible?(type, context)
-              return true
-            end
+        def type_membership_class(membership_class = nil)
+          if membership_class
+            @type_membership_class = membership_class
+          else
+            @type_membership_class || find_inherited_value(:type_membership_class, GraphQL::Schema::TypeMembership)
           end
-          false
         end
 
         # Here's the tricky part. Make sure behavior keeps making its way down the inheritance chain.
@@ -49,6 +55,7 @@ module GraphQL
             # We need this before we can call `own_interfaces`
             child_class.extend(Schema::Interface::DefinitionMethods)
 
+            child_class.type_membership_class(self.type_membership_class)
             child_class.own_interfaces << self
             child_class.interfaces.reverse_each do |interface_defn|
               child_class.extend(interface_defn::DefinitionMethods)
@@ -62,6 +69,15 @@ module GraphQL
               child_class.instance_variable_set(:@_definition_methods, defn_methods_module)
               child_class.const_set(:DefinitionMethods, defn_methods_module)
               child_class.extend(child_class::DefinitionMethods)
+            end
+            child_class.introspection(introspection)
+            child_class.description(description)
+            if overridden_graphql_name
+              child_class.graphql_name(overridden_graphql_name)
+            end
+            # If interfaces are mixed into each other, only define this class once
+            if !child_class.const_defined?(:UnresolvedTypeError, false)
+              add_unresolved_type_error(child_class)
             end
           elsif child_class < GraphQL::Schema::Object
             # This is being included into an object type, make sure it's using `implements(...)`
@@ -89,6 +105,8 @@ module GraphQL
           type_defn.name = graphql_name
           type_defn.description = description
           type_defn.orphan_types = orphan_types
+          type_defn.type_membership_class = self.type_membership_class
+          type_defn.ast_node = ast_node
           fields.each do |field_name, field_inst|
             field_defn = field_inst.graphql_definition
             type_defn.fields[field_defn.name] = field_defn

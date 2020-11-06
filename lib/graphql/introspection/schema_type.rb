@@ -1,4 +1,5 @@
 # frozen_string_literal: true
+
 module GraphQL
   module Introspection
     class SchemaType < Introspection::BaseObject
@@ -8,18 +9,13 @@ module GraphQL
                   "query, mutation, and subscription operations."
 
       field :types, [GraphQL::Schema::LateBoundType.new("__Type")], "A list of all types supported by this server.", null: false
-      field :queryType, GraphQL::Schema::LateBoundType.new("__Type"), "The type that query operations will be rooted at.", null: false
-      field :mutationType, GraphQL::Schema::LateBoundType.new("__Type"), "If this server supports mutation, the type that mutation operations will be rooted at.", null: true
-      field :subscriptionType, GraphQL::Schema::LateBoundType.new("__Type"), "If this server support subscription, the type that subscription operations will be rooted at.", null: true
+      field :query_type, GraphQL::Schema::LateBoundType.new("__Type"), "The type that query operations will be rooted at.", null: false
+      field :mutation_type, GraphQL::Schema::LateBoundType.new("__Type"), "If this server supports mutation, the type that mutation operations will be rooted at.", null: true
+      field :subscription_type, GraphQL::Schema::LateBoundType.new("__Type"), "If this server support subscription, the type that subscription operations will be rooted at.", null: true
       field :directives, [GraphQL::Schema::LateBoundType.new("__Directive")], "A list of all directives supported by this server.", null: false
 
       def types
-        types = @context.warden.types
-        if context.interpreter?
-          types.map { |t| t.metadata[:type_class] || raise("Invariant: can't introspect non-class-based type: #{t}") }
-        else
-          types
-        end
+        @context.warden.reachable_types.sort_by(&:graphql_name)
       end
 
       def query_type

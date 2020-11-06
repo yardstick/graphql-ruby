@@ -63,14 +63,18 @@ describe GraphQL::Backtrace do
       strField: String
     }
     GRAPHQL
-    GraphQL::Schema.from_definition(defn, default_resolve: resolvers).redefine {
+    schema_class = GraphQL::Schema.from_definition(defn, default_resolve: resolvers, interpreter: false)
+    schema_class.class_exec {
       lazy_resolve(LazyError, :raise_err)
       query_analyzer(ErrorAnalyzer.new)
     }
+    schema_class
   }
 
   let(:backtrace_schema) {
-    schema.redefine(use: GraphQL::Backtrace)
+    Class.new(schema) do
+      use GraphQL::Backtrace
+    end
   }
 
   describe "GraphQL backtrace helpers" do

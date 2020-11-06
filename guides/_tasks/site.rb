@@ -4,25 +4,32 @@ require "yard"
 namespace :apidocs do
   desc "Fetch a gem version from RubyGems, build the docs"
   task :gen_version, [:version] do |t, args|
-    version = args[:version] || raise("A version is required")
-    Dir.chdir("tmp") do
-      if !File.exist?("graphql-#{version}.gem")
-        system("gem fetch graphql --version=#{version}")
-      end
-      if !File.exist?("graphql-#{version}")
-        system("gem unpack graphql-#{version}.gem")
-      end
+    # GITHUB_REF comes from GitHub Actions
+    version = args[:version] || ENV["GITHUB_REF"] || raise("A version is required")
+    # GitHub Actions gives the full tag name
+    if version.start_with?("refs/tags/")
+      version = version[10..-1]
+    end
+    if version.start_with?("v")
+      version = version[1..-1]
+    end
+    Dir.mktmpdir do
+      puts "Fetching graphql-#{version}"
+      system("gem fetch graphql --version=#{version}")
+      system("gem unpack graphql-#{version}.gem")
+      system("rm graphql-#{version}.gem")
+
       Dir.chdir("graphql-#{version}") do
-        if !File.exist?("doc")
-          system("yardoc")
-        end
+        system("yardoc")
         # Copy it into gh-pages for publishing
         # and locally for previewing
-        push_dest = "../../gh-pages/api-doc/#{version}"
-        local_dest = "../../guides/_site/api-doc/#{version}"
+        push_dest = File.expand_path("../gh-pages/api-doc/#{version}")
+        local_dest = File.expand_path("../guides/_site/api-doc/#{version}")
         mkdir_p push_dest
         mkdir_p local_dest
+        puts "Copying from #{Dir.pwd}/doc to #{push_dest}"
         copy_entry "doc", push_dest
+        puts "Copying from #{Dir.pwd}/doc to #{local_dest}"
         copy_entry "doc", local_dest
       end
     end
@@ -46,8 +53,8 @@ namespace :site do
     Jekyll::Commands::Serve.process(options)
   end
 
-  desc "Commit the local site to the gh-pages branch and publish to GitHub Pages"
-  task publish: [:build_doc, :update_search_index] do
+  desc "Get the gh-pages branch locally, make sure it's up-to-date"
+  task :fetch_latest do
     # Ensure the gh-pages dir exists so we can generate into it.
     puts "Checking for gh-pages dir..."
     unless File.exist?("./gh-pages")
@@ -60,7 +67,10 @@ namespace :site do
       sh "git checkout gh-pages"
       sh "git pull origin gh-pages"
     end
+  end
 
+  desc "Remove all generated HTML (making space to re-generate)"
+  task :clean_html do
     # Proceed to purge all files in case we removed a file in this release.
     puts "Cleaning gh-pages directory..."
     purge_exclude = [
@@ -74,7 +84,10 @@ namespace :site do
     FileList["gh-pages/{*,.*}"].exclude(*purge_exclude).each do |path|
       sh "rm -rf #{path}"
     end
+  end
 
+  desc "Build guides/ into gh-pages/ with Jekyll"
+  task :build_html do
     # Copy site to gh-pages dir.
     puts "Building site into gh-pages branch..."
     ENV['JEKYLL_ENV'] = 'production'
@@ -86,17 +99,29 @@ namespace :site do
     })
 
     File.write('gh-pages/.nojekyll', "Prevent GitHub from running Jekyll")
+  end
 
-    # Commit and push.
+  desc "Commit new docs"
+  task :commit_changes do
     puts "Committing and pushing to GitHub Pages..."
     sha = `git rev-parse HEAD`.strip
     Dir.chdir('gh-pages') do
-      sh "git add ."
-      sh "git commit --allow-empty -m 'Updating to #{sha}.'"
+      system "git status"
+      system "git add ."
+      system "git status"
+      system "git commit --allow-empty -m 'Updating to #{sha}.'"
+    end
+  end
+
+  desc "Push docs to gh-pages branch"
+  task :push_commit do
+    Dir.chdir('gh-pages') do
       sh "git push origin gh-pages"
     end
-    puts 'Done.'
   end
+
+  desc "Commit the local site to the gh-pages branch and publish to GitHub Pages"
+  task publish: [:build_doc, :update_search_index, :fetch_latest, :clean_html, :build_html, :commit_changes, :push_commit]
 
   YARD::Rake::YardocTask.new(:prepare_yardoc)
 

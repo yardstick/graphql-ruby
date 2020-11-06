@@ -34,8 +34,7 @@ module GraphQL
         @schema = schema
         @queries = queries
         @context = context
-        # TODO remove support for global tracers
-        @tracers = schema.tracers + GraphQL::Tracing.tracers + (context[:tracers] || [])
+        @tracers = schema.tracers + (context[:tracers] || [])
         # Support `context: {backtrace: true}`
         if context[:backtrace] && !@tracers.include?(GraphQL::Backtrace::Tracer)
           @tracers << GraphQL::Backtrace::Tracer
@@ -44,9 +43,9 @@ module GraphQL
       end
 
       class << self
-        def run_all(schema, query_options, *args)
-          queries = query_options.map { |opts| GraphQL::Query.new(schema, nil, opts) }
-          run_queries(schema, queries, *args)
+        def run_all(schema, query_options, **kwargs)
+          queries = query_options.map { |opts| GraphQL::Query.new(schema, nil, **opts) }
+          run_queries(schema, queries, **kwargs)
         end
 
         # @param schema [GraphQL::Schema]
@@ -95,6 +94,7 @@ module GraphQL
             query.result
           end
         rescue Exception
+          # TODO rescue at a higher level so it will catch errors in analysis, too
           # Assign values here so that the query's `@executed` becomes true
           queries.map { |q| q.result_values ||= {} }
           raise
@@ -173,6 +173,15 @@ module GraphQL
         def instrument_and_analyze(multiplex)
           GraphQL::Execution::Instrumentation.apply_instrumenters(multiplex) do
             schema = multiplex.schema
+            if schema.interpreter? && schema.analysis_engine != GraphQL::Analysis::AST
+              raise <<-ERR
+Can't use `GraphQL::Execution::Interpreter` without `GraphQL::Analysis::AST`, please add this plugin to your schema:
+
+    use GraphQL::Analysis::AST
+
+For information about the new analysis engine: https://graphql-ruby.org/queries/ast_analysis.html
+ERR
+            end
             multiplex_analyzers = schema.multiplex_analyzers
             if multiplex.max_complexity
               multiplex_analyzers += if schema.using_ast_analysis?

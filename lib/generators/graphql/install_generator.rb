@@ -13,6 +13,8 @@ module Graphql
     #   - graphql/
     #     - resolvers/
     #     - types/
+    #       - base_argument.rb
+    #       - base_field.rb
     #       - base_enum.rb
     #       - base_input_object.rb
     #       - base_interface.rb
@@ -22,6 +24,7 @@ module Graphql
     #       - query_type.rb
     #     - loaders/
     #     - mutations/
+    #       - base_mutation.rb
     #     - {app_name}_schema.rb
     # ```
     #
@@ -84,6 +87,11 @@ module Graphql
         default: false,
         desc: "Include GraphQL::Batch installation"
 
+      class_option :playground,
+        type: :boolean,
+        default: false,
+        desc: "Use GraphQL Playground over Graphiql as IDE"
+
       # These two options are taken from Rails' own generators'
       class_option :api,
         type: :boolean,
@@ -93,7 +101,7 @@ module Graphql
         create_dir("#{options[:directory]}/types")
         template("schema.erb", schema_file_path)
 
-        ["base_object", "base_enum", "base_input_object", "base_interface", "base_scalar", "base_union"].each do |base_type|
+        ["base_object", "base_argument", "base_field", "base_enum", "base_input_object", "base_interface", "base_scalar", "base_union"].each do |base_type|
           template("#{base_type}.erb", "#{options[:directory]}/types/#{base_type}.rb")
         end
 
@@ -135,6 +143,28 @@ if Rails.env.development?
 RUBY
             end
           end
+        end
+
+        if options[:playground]
+          gem("graphql_playground-rails", group: :development)
+
+          log :route, 'graphql_playground-rails'
+          shell.mute do
+            if Rails::VERSION::STRING > "5.2"
+              route <<-RUBY
+if Rails.env.development?
+  mount GraphqlPlayground::Rails::Engine, at: "/playground", graphql_path: "/graphql"
+end
+RUBY
+            else
+              route <<-RUBY
+if Rails.env.development?
+    mount GraphqlPlayground::Rails::Engine, at: "/playground", graphql_path: "/graphql"
+  end
+RUBY
+            end
+          end
+
         end
 
         if gemfile_modified?

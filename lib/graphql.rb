@@ -7,7 +7,26 @@ require "forwardable"
 require_relative "./graphql/railtie" if defined? Rails::Railtie
 
 module GraphQL
+  # forwards-compat for argument handling
+  module Ruby2Keywords
+    if RUBY_VERSION < "2.7"
+      def ruby2_keywords(*)
+      end
+    end
+  end
+
   class Error < StandardError
+  end
+
+  class RequiredImplementationMissingError < Error
+  end
+
+  class << self
+    def default_parser
+      @default_parser ||= GraphQL::Language::Parser
+    end
+
+    attr_writer :default_parser
   end
 
   # Turn a query string or schema definition into an AST
@@ -50,6 +69,14 @@ module GraphQL
       end
     end
   end
+
+  module StringMatchBackport
+    refine String do
+      def match?(pattern)
+        self =~ pattern
+      end
+    end
+  end
 end
 
 # Order matters for these:
@@ -78,9 +105,13 @@ require "graphql/name_validator"
 require "graphql/language"
 require "graphql/analysis"
 require "graphql/tracing"
-require "graphql/execution"
 require "graphql/dig"
+require "graphql/execution"
+require "graphql/runtime_type_error"
+require "graphql/unresolved_type_error"
+require "graphql/invalid_null_error"
 require "graphql/schema"
+require "graphql/query"
 require "graphql/directive"
 require "graphql/execution"
 require "graphql/types"
@@ -97,14 +128,9 @@ require "graphql/introspection"
 
 require "graphql/analysis_error"
 require "graphql/coercion_error"
-require "graphql/literal_validation_error"
-require "graphql/runtime_type_error"
-require "graphql/invalid_null_error"
 require "graphql/invalid_name_error"
-require "graphql/unresolved_type_error"
 require "graphql/integer_encoding_error"
 require "graphql/string_encoding_error"
-require "graphql/query"
 require "graphql/internal_representation"
 require "graphql/static_validation"
 require "graphql/version"
@@ -120,3 +146,4 @@ require "graphql/authorization"
 require "graphql/unauthorized_error"
 require "graphql/unauthorized_field_error"
 require "graphql/load_application_object_failed_error"
+require "graphql/pagination"

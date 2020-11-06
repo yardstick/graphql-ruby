@@ -66,6 +66,23 @@ Leaf fields are _not_ monitored (to avoid high cardinality in the metrics servic
 
 Implementations are based on {{ "Tracing::PlatformTracing" | api_doc }}.
 
+## AppOptics
+
+[AppOptics](https://appoptics.com/) instrumentation will be automatic starting
+with appoptics_apm-4.11.0.gem. For earlier gem versions please add appoptics_apm
+tracing as follows:
+
+```ruby
+require 'appoptics_apm'
+
+class MySchema < GraphQL::Schema
+  use(GraphQL::Tracing::AppOpticsTracing)
+end
+```
+<div class="monitoring-img-group">
+  {{ "/queries/appoptics_example.png" | link_to_img:"appoptics monitoring" }}
+</div>
+
 ## Appsignal
 
 To add [AppSignal](https://appsignal.com/) instrumentation:
@@ -113,18 +130,18 @@ end
 
 ## Skylight
 
-To add [Skylight](https://www.skylight.io) instrumentation:
+To add [Skylight](https://www.skylight.io) instrumentation, you may either enable the [GraphQL probe](https://www.skylight.io/support/getting-more-from-skylight#graphql) or use [ActiveSupportNotificationsTracing](/queries/tracing.html#activesupportnotifications).
 
 ```ruby
-class MySchema < GraphQL::Schema
-  use(GraphQL::Tracing::SkylightTracing)
-end
+# config/application.rb
+config.skylight.probes << "graphql"
 ```
-
 
 <div class="monitoring-img-group">
   {{ "/queries/skylight_example.png" | link_to_img:"skylight monitoring" }}
 </div>
+
+GraphQL instrumentation for Skylight is available in versions >= 4.2.0.
 
 ## Datadog
 
@@ -174,3 +191,18 @@ end
 ```sh
 bundle exec prometheus_exporter -a lib/graphql_collector.rb
 ```
+
+## Statsd
+
+You can add Statsd instrumentation by initializing a statsd client and passing it to {{ "GraphQL::Tracing::StatsdTracing" | api_doc }}:
+
+```ruby
+$statsd = Statsd.new 'localhost', 9125
+# ...
+
+class MySchema < GraphQL::Schema
+  use GraphQL::Tracing::StatsdTracing, statsd: $statsd
+end
+```
+
+Any Statsd client that implements `.time(name) { ... }` will work.

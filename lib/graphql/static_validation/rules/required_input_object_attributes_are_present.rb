@@ -26,8 +26,7 @@ module GraphQL
           context.field_definition
         end
 
-        parent_type = context.warden.arguments(defn)
-          .find{|f| f.name == parent_name(parent, defn) }
+        parent_type = context.warden.get_argument(defn, parent_name(parent, defn))
         parent_type ? parent_type.type.unwrap : nil
       end
 
@@ -46,10 +45,10 @@ module GraphQL
           path = [*context.path, missing_field]
           missing_field_type = parent_type.arguments[missing_field].type
           add_error(RequiredInputObjectAttributesArePresentError.new(
-            "Argument '#{missing_field}' on InputObject '#{parent_type}' is required. Expected type #{missing_field_type}",
+            "Argument '#{missing_field}' on InputObject '#{parent_type.to_type_signature}' is required. Expected type #{missing_field_type.to_type_signature}",
             argument_name: missing_field,
-            argument_type: missing_field_type.to_s,
-            input_object_type: parent_type.to_s,
+            argument_type: missing_field_type.to_type_signature,
+            input_object_type: parent_type.to_type_signature,
             path: path,
             nodes: ast_node,
           ))

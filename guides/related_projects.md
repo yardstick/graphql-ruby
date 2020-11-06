@@ -16,8 +16,10 @@ Want to add something? Please open a pull request [on GitHub](https://github.com
 - [`graphql-batch`](https://github.com/shopify/graphql-batch), a batched query execution strategy
 - [`graphql-cache`](https://github.com/stackshareio/graphql-cache), a resolver-level caching solution
 - [`graphql-libgraphqlparser`](https://github.com/rmosolgo/graphql-libgraphqlparser-ruby), bindings to [libgraphqlparser](https://github.com/graphql/libgraphqlparser), a C-level parser.
+- [`graphql-devise`](https://github.com/graphql-devise/graphql_devise), a gql interface to handle authentication with Devise
 - [`graphql-docs`](https://github.com/gjtorikian/graphql-docs), a tool to automatically generate static HTML documentation from your GraphQL implementation
 - [`graphql-metrics`](https://github.com/Shopify/graphql-metrics), a plugin to extract fine-grain metrics of GraphQL queries received by your server
+- [`graphql-groups`](https://github.com/hschne/graphql-groups), a DSL to define group- and aggregation queries with graphql-ruby
 - Rails Helpers:
   - [`graphql-activerecord`](https://github.com/goco-inc/graphql-activerecord)
   - [`graphql-rails-resolve`](https://github.com/colepatrickturner/graphql-rails-resolver)
@@ -25,6 +27,9 @@ Want to add something? Please open a pull request [on GitHub](https://github.com
   - [`graphql-rails_logger`](https://github.com/jetruby/graphql-rails_logger), a logger which allows you to inspect GraphQL queries in a more readable format.
   - [`apollo_upload_server-ruby`](https://github.com/jetruby/apollo_upload_server-ruby), a middleware which allows you to upload files with GraphQL and multipart/form-data using [`apollo-upload-client`](https://github.com/jaydenseric/apollo-upload-client) library on front-end.
 - [`search_object_graphql`](https://github.com/rstankov/SearchObjectGraphQL), a DSL for defining search resolvers for GraphQL.
+- [`action_policy-graphql`](https://github.com/palkan/action_policy-graphql), an integration for using [`action_policy`](https://github.com/palkan/action_policy) as an authorization framework for GraphQL applications.
+- [`graphql_rails`](https://github.com/samesystem/graphql_rails), Rails way GraphQL build tool
+- [`graphql-rails-generators`](https://github.com/ajsharp/graphql-rails-generators), Generate graphql-ruby mutations, types and input types from your ActiveRecord models.
 
 ## Blog Posts
 
@@ -35,6 +40,9 @@ Want to add something? Please open a pull request [on GitHub](https://github.com
 - http://mgiroux.me/2015/uploading-files-using-relay-with-rails/
 - http://mgiroux.me/2016/journey-into-graphql-ruby-query-execution/
 - https://jonsimpson.ca/parallel-graphql-resolvers-with-futures/
+- Active Storage meets GraphQL: [Direct uploads](https://evilmartians.com/chronicles/active-storage-meets-graphql-direct-uploads) and [Exposing attachment URLs](https://evilmartians.com/chronicles/active-storage-meets-graphql-pt-2-exposing-attachment-urls)
+- [Exposing permissions in GraphQL APIs with Action Policy](https://evilmartians.com/chronicles/exposing-permissions-in-graphql-apis-with-action-policy)
+- [Reporting non-nullable violations in graphql-ruby properly](https://evilmartians.com/chronicles/reporting-non-nullable-violations-in-graphql-ruby-properly)
 
 ## Screencasts
 
@@ -47,3 +55,5 @@ Want to add something? Please open a pull request [on GitHub](https://github.com
 - [How To GraphQL](https://www.howtographql.com/graphql-ruby/0-introduction/) by [@rstankov](https://github.com/rstankov)
 
 - [GraphQL Ruby CRUD Tutorial](https://www.blook.pub/books/graphql-rails-tutorial) by [@kohheepeace](https://twitter.com/kohheepeace)
+
+- Rails/GraphQL + React/Apollo Tutorial ([Part 1](https://evilmartians.com/chronicles/graphql-on-rails-1-from-zero-to-the-first-query), [Part 2](https://evilmartians.com/chronicles/graphql-on-rails-2-updating-the-data), [Part 3](https://evilmartians.com/chronicles/graphql-on-rails-3-on-the-way-to-perfection)) by [@evilmartians](https://twitter.com/evilmartians)

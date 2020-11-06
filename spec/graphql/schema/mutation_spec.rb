@@ -106,6 +106,24 @@ describe GraphQL::Schema::Mutation do
       assert_equal errors_class, response["data"]["addInstrument"]["ee"]
       assert_equal 7, response["data"]["addInstrument"]["entries"].size
     end
+
+    it "accepts a list of errors as a valid result" do
+      query_str = "mutation { returnsMultipleErrors { dummyField { name } } }"
+
+      response = Jazz::Schema.execute(query_str)
+      assert_equal 2, response["errors"].length, "It should return two errors"
+    end
+
+    it "raises a mutation-specific invalid null error" do
+      query_str = "mutation { returnInvalidNull { int } }"
+      response = Jazz::Schema.execute(query_str)
+      assert_equal ["Cannot return null for non-nullable field ReturnInvalidNullPayload.int"], response["errors"].map { |e| e["message"] }
+      if TESTING_INTERPRETER
+        error = response.query.context.errors.first
+        assert_instance_of Jazz::ReturnInvalidNull.payload_type::InvalidNullError, error
+        assert_equal "Jazz::ReturnInvalidNull::ReturnInvalidNullPayload::InvalidNullError", error.class.inspect
+      end
+    end
   end
 
   describe ".null" do
@@ -145,6 +163,27 @@ describe GraphQL::Schema::Mutation do
 
       assert_equal false, inheriting_mutation.field_options[:null]
       assert override_mutation.field_options[:null]
+    end
+  end
+
+  it "warns once for possible conflict methods" do
+    expected_warning = "X's `field :module` conflicts with a built-in method, use `hash_key:` or `method:` to pick a different resolve behavior for this field (for example, `hash_key: :module_value`, and modify the return hash). Or use `method_conflict_warning: false` to suppress this warning.\n"
+    assert_output "", expected_warning do
+      # This should warn:
+      mutation = Class.new(GraphQL::Schema::Mutation) do
+        graphql_name "X"
+        field :module, String, null: true
+      end
+      # This should not warn again, when generating the payload type with the same fields:
+      mutation.payload_type
+    end
+
+    assert_output "", "" do
+      mutation = Class.new(GraphQL::Schema::Mutation) do
+        graphql_name "X"
+        field :module, String, null: true, hash_key: :module_value
+      end
+      mutation.payload_type
     end
   end
 end

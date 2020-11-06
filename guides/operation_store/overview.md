@@ -9,7 +9,7 @@ index: 0
 pro: true
 ---
 
-`GraphQL::Pro::OperationStore` uses `ActiveRecord` and `Rack` to maintain a normalized, deduplicated database of _persisted queries_ for your GraphQL system.
+`GraphQL::Pro::OperationStore` uses `Rack` and a storage backend ({% internal_link "ActiveRecord", "/operation_store/active_record_backend" %} or {% internal_link "Redis", "/operation_store/active_record_backend" %}) to maintain a normalized, deduplicated database of _persisted queries_ for your GraphQL system.
 
 In this guide, you'll find:
 
@@ -99,7 +99,6 @@ But _after_ using persisted queries, only the query identification info is sent 
 Persisted queries improve _visibility_ because you can track GraphQL usage from a single location. `OperationStore` maintains an index of type, field and argument usage so that you can analyze your traffic.
 
 {{ "/operation_store/operation_index.png" | link_to_img:"Index of GraphQL usage with persisted queries" }}
-
 
 ### How it Works
 

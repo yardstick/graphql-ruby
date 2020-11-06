@@ -4,7 +4,7 @@ module StarTrek
   # https://github.com/graphql/graphql-relay-js/blob/master/src/__tests__/StarTrekSchema.js
 
   class Ship < GraphQL::Schema::Object
-    implements GraphQL::Relay::Node.interface
+    implements GraphQL::Types::Relay::Node
     global_id_field :id
     field :name, String, null: true
     # Test cyclical connection types:
@@ -18,7 +18,7 @@ module StarTrek
 
   class BaseType < GraphQL::Schema::Object
     graphql_name "Base"
-    implements GraphQL::Relay::Node.interface
+    implements GraphQL::Types::Relay::Node
     global_id_field :id
     field :name, String, null: false, resolve: ->(obj, args, ctx) {
       LazyWrapper.new {
@@ -55,7 +55,6 @@ module StarTrek
 
   class CustomBaseEdgeType < GraphQL::Types::Relay::BaseEdge
     node_type(BaseType)
-    graphql_name "CustomBaseEdge"
     field :upcased_name, String, null: true
     field :upcased_parent_name, String, null: true
     field :edge_class_name, String, null: true
@@ -103,7 +102,7 @@ module StarTrek
   end
 
   class Faction < GraphQL::Schema::Object
-    implements GraphQL::Relay::Node.interface
+    implements GraphQL::Types::Relay::Node
 
     field :id, ID, null: false, resolve: GraphQL::Relay::GlobalIdResolve.new(type: Faction)
     field :name, String, null: true
@@ -149,8 +148,8 @@ module StarTrek
       all_bases
     end
 
-    field :basesClone, BaseType.connection_type, null: true
-    field :basesByName, BaseType.connection_type, null: true do
+    field :bases_clone, BaseType.connection_type, null: true
+    field :bases_by_name, BaseType.connection_type, null: true do
       argument :order, String, default_value: "name", required: false
     end
     def bases_by_name(order: nil)
@@ -175,7 +174,7 @@ module StarTrek
     field :basesWithDefaultMaxLimitArray, BaseType.connection_type, null: true, resolver_method: :all_bases_array
     field :basesWithLargeMaxLimitRelation, BaseType.connection_type, null: true, max_page_size: 1000, resolver_method: :all_bases
 
-    field :basesWithCustomEdge, CustomEdgeBaseConnectionType, null: true, connection: true
+    field :bases_with_custom_edge, CustomEdgeBaseConnectionType, null: true, connection: true
     def bases_with_custom_edge
       LazyNodesWrapper.new(object.bases)
     end
@@ -194,26 +193,6 @@ module StarTrek
     field :aliased_faction, Faction, hash_key: :aliased_faction, null: true
 
     def resolve(ship_name: nil, faction_id:)
-      IntroduceShipFunction.new.call(object, {ship_name: ship_name, faction_id: faction_id}, context)
-    end
-  end
-
-  class IntroduceShipFunction < GraphQL::Function
-    description "Add a ship to this faction"
-
-    argument :shipName, GraphQL::STRING_TYPE
-    argument :factionId, !GraphQL::ID_TYPE
-
-    type(GraphQL::ObjectType.define do
-      name "IntroduceShipFunctionPayload"
-      field :shipEdge, Ship.edge_type, hash_key: :shipEdge
-      field :faction, Faction, hash_key: :shipEdge
-    end)
-
-    def call(obj, args, ctx)
-      # support old and new args
-      ship_name = args["shipName"] || args[:ship_name]
-      faction_id = args["factionId"] || args[:faction_id]
       if ship_name == 'USS Voyager'
         GraphQL::ExecutionError.new("Sorry, USS Voyager ship is reserved")
       elsif ship_name == 'IKS Korinar'
@@ -232,19 +211,13 @@ module StarTrek
           faction: faction,
           aliased_faction: faction,
         }
-        if args["shipName"] == "Slave II"
+        if ship_name == "Slave II"
           LazyWrapper.new(result)
         else
           result
         end
       end
     end
-  end
-
-  IntroduceShipFunctionMutation = GraphQL::Relay::Mutation.define do
-    # Used as the root for derived types:
-    name "IntroduceShipFunction"
-    function IntroduceShipFunction.new
   end
 
   # GraphQL-Batch knockoff
@@ -308,15 +281,30 @@ module StarTrek
   class QueryType < GraphQL::Schema::Object
     graphql_name "Query"
 
-    field :federation, Faction, null: true, resolve: ->(obj, args, ctx) { StarTrek::DATA["Faction"]["1"]}
+    field :federation, Faction, null: true
 
-    field :klingons, Faction, null: true, resolve: ->(obj, args, ctx) { StarTrek::DATA["Faction"]["2"]}
+    def federation
+      StarTrek::DATA["Faction"]["1"]
+    end
 
-    field :romulans, Faction, null: true, resolve: ->(obj, args, ctx) { StarTrek::DATA["Faction"]["3"]}
+    field :klingons, Faction, null: true
+    def klingons
+      StarTrek::DATA["Faction"]["2"]
+    end
 
-    field :largestBase, BaseType, null: true, resolve: ->(obj, args, ctx) { Base.find(3) }
+    field :romulans, Faction, null: true
 
-    field :newestBasesGroupedByFaction, BaseType.connection_type, null: true
+    def romulans
+      StarTrek::DATA["Faction"]["3"]
+    end
+
+    field :largest_base, BaseType, null: true
+
+    def largest_base
+      Base.find(3)
+    end
+
+    field :newest_bases_grouped_by_faction, BaseType.connection_type, null: true
 
     def newest_bases_grouped_by_faction
       agg = Base.collection.aggregate([{
@@ -330,25 +318,52 @@ module StarTrek
         order_by(faction_id: -1)
     end
 
-    field :basesWithNullName, BaseType.connection_type, null: false
+    field :bases_with_null_name, BaseType.connection_type, null: false
 
     def bases_with_null_name
       [OpenStruct.new(id: nil)]
     end
 
-    field :node, field: GraphQL::Relay::Node.field
-
-    custom_node_field = GraphQL::Relay::Node.field do
-      resolve ->(_, _, _) { StarTrek::DATA["Faction"]["1"] }
+    if TESTING_INTERPRETER
+      add_field(GraphQL::Types::Relay::NodeField)
+    else
+      field :node, field: GraphQL::Relay::Node.field
     end
-    field :nodeWithCustomResolver, field: custom_node_field
 
-    field :nodes, field: GraphQL::Relay::Node.plural_field
-    field :nodesWithCustomResolver, field: GraphQL::Relay::Node.plural_field(
-      resolve: ->(_, _, _) { [StarTrek::DATA["Faction"]["1"], StarTrek::DATA["Faction"]["2"]] }
-    )
+    if TESTING_INTERPRETER
+      field :node_with_custom_resolver, GraphQL::Types::Relay::Node, null: true do
+        argument :id, ID, required: true
+      end
+      def node_with_custom_resolver(id:)
+        StarTrek::DATA["Faction"]["1"]
+      end
+    else
+      custom_node_field = GraphQL::Relay::Node.field do
+        resolve ->(_, _, _) { StarTrek::DATA["Faction"]["1"] }
+      end
+      field :nodeWithCustomResolver, field: custom_node_field
+    end
 
-    field :batchedBase, BaseType, null: true do
+    if TESTING_INTERPRETER
+      add_field(GraphQL::Types::Relay::NodesField)
+    else
+      field :nodes, field: GraphQL::Relay::Node.plural_field
+    end
+
+    if TESTING_INTERPRETER
+      field :nodes_with_custom_resolver, [GraphQL::Types::Relay::Node, null: true], null: true do
+        argument :ids, [ID], required: true
+      end
+      def nodes_with_custom_resolver(ids:)
+        [StarTrek::DATA["Faction"]["1"], StarTrek::DATA["Faction"]["2"]]
+      end
+    else
+      field :nodesWithCustomResolver, field: GraphQL::Relay::Node.plural_field(
+        resolve: ->(_, _, _) { [StarTrek::DATA["Faction"]["1"], StarTrek::DATA["Faction"]["2"]] }
+      )
+    end
+
+    field :batched_base, BaseType, null: true do
       argument :id, ID, required: true
     end
 
@@ -360,8 +375,6 @@ module StarTrek
   class MutationType < GraphQL::Schema::Object
     graphql_name "Mutation"
     field :introduceShip, mutation: IntroduceShipMutation
-    # To hook up a Relay::Mutation
-    field :introduceShipFunction, field: IntroduceShipFunctionMutation.field
   end
 
   class ClassNameRecorder
@@ -391,6 +404,7 @@ module StarTrek
 
     if TESTING_INTERPRETER
       use GraphQL::Execution::Interpreter
+      use GraphQL::Analysis::AST
     end
 
     def self.resolve_type(type, object, ctx)
@@ -413,7 +427,7 @@ module StarTrek
     end
 
     def self.id_from_object(object, type, ctx)
-      GraphQL::Schema::UniqueWithinType.encode(type.name, object.id)
+      GraphQL::Schema::UniqueWithinType.encode(type.graphql_name, object.id)
     end
 
     lazy_resolve(LazyWrapper, :value)

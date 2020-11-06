@@ -25,6 +25,10 @@ module GraphQL
         # @param nodes [Object] A collection of nodes (eg, Array, AR::Relation)
         # @return [subclass of BaseConnection] a connection Class for wrapping `nodes`
         def connection_for_nodes(nodes)
+          # If it's a new-style connection object, it's already ready to go
+          if nodes.is_a?(GraphQL::Pagination::Connection)
+            return nodes
+          end
           # Check for class _names_ because classes can be redefined in Rails development
           nodes.class.ancestors.each do |ancestor|
             conn_impl = CONNECTION_IMPLEMENTATIONS[ancestor.name]
@@ -70,14 +74,18 @@ module GraphQL
 
       def decode(data)
         @encoder.decode(data, nonce: true)
-      rescue ArgumentError
-        raise GraphQL::ExecutionError, "Invalid cursor: #{data.inspect}"
       end
 
       # The value passed as `first:`, if there was one. Negative numbers become `0`.
       # @return [Integer, nil]
       def first
-        @first ||= get_limited_arg(:first)
+        @first ||= begin
+          capped = limit_pagination_argument(arguments[:first], max_page_size)
+          if capped.nil? && last.nil?
+            capped = max_page_size
+          end
+          capped
+        end
       end
 
       # The value passed as `after:`, if there was one
@@ -89,7 +97,7 @@ module GraphQL
       # The value passed as `last:`, if there was one. Negative numbers become `0`.
       # @return [Integer, nil]
       def last
-        @last ||= get_limited_arg(:last)
+        @last ||= limit_pagination_argument(arguments[:last], max_page_size)
       end
 
       # The value passed as `before:`, if there was one
@@ -139,7 +147,7 @@ module GraphQL
 
       # An opaque operation which returns a connection-specific cursor.
       def cursor_from_node(object)
-        raise NotImplementedError, "must return a cursor for this object/connection pair"
+        raise GraphQL::RequiredImplementationMissingError, "must return a cursor for this object/connection pair"
       end
 
       def inspect
@@ -148,24 +156,26 @@ module GraphQL
 
       private
 
-      # Return a sanitized `arguments[arg_name]` (don't allow negatives)
-      def get_limited_arg(arg_name)
-        arg_value = arguments[arg_name]
-        if arg_value.nil?
-          arg_value
-        elsif arg_value < 0
-          0
-        else
-          arg_value
+      # @param argument [nil, Integer] `first` or `last`, as provided by the client
+      # @param max_page_size [nil, Integer]
+      # @return [nil, Integer] `nil` if the input was `nil`, otherwise a value between `0` and `max_page_size`
+      def limit_pagination_argument(argument, max_page_size)
+        if argument
+          if argument < 0
+            argument = 0
+          elsif max_page_size && argument > max_page_size
+            argument = max_page_size
+          end
         end
+        argument
       end
 
       def paged_nodes
-        raise NotImplementedError, "must return nodes for this connection after paging"
+        raise GraphQL::RequiredImplementationMissingError, "must return nodes for this connection after paging"
       end
 
       def sliced_nodes
-        raise NotImplementedError, "must return  all nodes for this connection after chopping off first and last"
+        raise GraphQL::RequiredImplementationMissingError, "must return  all nodes for this connection after chopping off first and last"
       end
     end
   end

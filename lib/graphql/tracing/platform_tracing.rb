@@ -32,15 +32,18 @@ module GraphQL
             trace_field = true # implemented with instrumenter
           else
             field = data[:field]
-            owner = data[:owner]
-            # Lots of duplicated work here, can this be done ahead of time?
-            platform_key = platform_field_key(owner, field)
             return_type = field.type.unwrap
-            # Handle LateBoundTypes, which don't have `#kind`
-            trace_field = if return_type.respond_to?(:kind) && (return_type.kind.scalar? || return_type.kind.enum?)
+            trace_field = if return_type.kind.scalar? || return_type.kind.enum?
               (field.trace.nil? && @trace_scalars) || field.trace
             else
               true
+            end
+
+            platform_key = if trace_field
+              context = data.fetch(:query).context
+              cached_platform_key(context, field) { platform_field_key(data[:owner], field) }
+            else
+              nil
             end
           end
 
@@ -49,6 +52,20 @@ module GraphQL
               yield
             end
           else
+            yield
+          end
+        when "authorized", "authorized_lazy"
+          type = data.fetch(:type)
+          context = data.fetch(:context)
+          platform_key = cached_platform_key(context, type) { platform_authorized_key(type) }
+          platform_trace(platform_key, key, data) do
+            yield
+          end
+        when "resolve_type", "resolve_type_lazy"
+          type = data.fetch(:type)
+          context = data.fetch(:context)
+          platform_key = cached_platform_key(context, type) { platform_resolve_type_key(type) }
+          platform_trace(platform_key, key, data) do
             yield
           end
         else
@@ -84,7 +101,37 @@ module GraphQL
       end
 
       private
+
+      # Get the transaction name based on the operation type and name
+      def transaction_name(query)
+        selected_op = query.selected_operation
+        if selected_op
+          op_type = selected_op.operation_type
+          op_name = selected_op.name || "anonymous"
+        else
+          op_type = "query"
+          op_name = "anonymous"
+        end
+        "GraphQL/#{op_type}.#{op_name}"
+      end
+
       attr_reader :options
+
+      # Different kind of schema objects have different kinds of keys:
+      #
+      # - Object types: `.authorized`
+      # - Union/Interface types: `.resolve_type`
+      # - Fields: execution
+      #
+      # So, they can all share one cache.
+      #
+      # If the key isn't present, the given block is called and the result is cached for `key`.
+      #
+      # @return [String]
+      def cached_platform_key(ctx, key)
+        cache = ctx.namespace(self.class)[:platform_key_cache] ||= {}
+        cache.fetch(key) { cache[key] = yield }
+      end
     end
   end
 end

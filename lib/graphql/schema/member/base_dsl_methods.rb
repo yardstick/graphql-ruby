@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "graphql/schema/find_inherited_value"
+
 module GraphQL
   class Schema
     class Member
@@ -7,6 +9,8 @@ module GraphQL
       # @api private
       # @see Classes that extend this, eg {GraphQL::Schema::Object}
       module BaseDSLMethods
+        include GraphQL::Schema::FindInheritedValue
+
         # Call this with a new name to override the default name for this schema member; OR
         # call it without an argument to get the name of this schema member
         #
@@ -14,14 +18,15 @@ module GraphQL
         # @param new_name [String]
         # @return [String]
         def graphql_name(new_name = nil)
-          case
-          when new_name
+          if new_name
             @graphql_name = new_name
-          when overridden = overridden_graphql_name
-            overridden
           else
-            default_graphql_name
+            overridden_graphql_name || default_graphql_name
           end
+        end
+
+        def overridden_graphql_name
+          defined?(@graphql_name) ? @graphql_name : nil
         end
 
         # Just a convenience method to point out that people should use graphql_name instead
@@ -41,8 +46,23 @@ module GraphQL
         def description(new_description = nil)
           if new_description
             @description = new_description
+          elsif defined?(@description)
+            @description
           else
-            @description || find_inherited_method(:description, nil)
+            nil
+          end
+        end
+
+        # This pushes some configurations _down_ the inheritance tree,
+        # in order to prevent repetitive lookups at runtime.
+        module ConfigurationExtension
+          def inherited(child_class)
+            child_class.introspection(introspection)
+            child_class.description(description)
+            if overridden_graphql_name
+              child_class.graphql_name(overridden_graphql_name)
+            end
+            super
           end
         end
 
@@ -50,8 +70,10 @@ module GraphQL
         def introspection(new_introspection = nil)
           if !new_introspection.nil?
             @introspection = new_introspection
+          elsif defined?(@introspection)
+            @introspection
           else
-            @introspection || find_inherited_method(:introspection, false)
+            false
           end
         end
 
@@ -64,27 +86,26 @@ module GraphQL
         def mutation(mutation_class = nil)
           if mutation_class
             @mutation = mutation_class
+          elsif defined?(@mutation)
+            @mutation
+          else
+            nil
           end
-          @mutation
         end
 
         # @return [GraphQL::BaseType] Convert this type to a legacy-style object.
         def to_graphql
-          raise NotImplementedError
+          raise GraphQL::RequiredImplementationMissingError
         end
 
         alias :unwrap :itself
-
-        def overridden_graphql_name
-          @graphql_name || find_inherited_method(:overridden_graphql_name, nil)
-        end
 
         # Creates the default name for a schema member.
         # The default name is the Ruby constant name,
         # without any namespaces and with any `-Type` suffix removed
         def default_graphql_name
           @default_graphql_name ||= begin
-            raise NotImplementedError, 'Anonymous class should declare a `graphql_name`' if name.nil?
+            raise GraphQL::RequiredImplementationMissingError, 'Anonymous class should declare a `graphql_name`' if name.nil?
 
             name.split("::").last.sub(/Type\Z/, "")
           end
@@ -111,21 +132,6 @@ module GraphQL
             @mutation.authorized?(object, context)
           else
             true
-          end
-        end
-
-        private
-
-        def find_inherited_method(method_name, default_value)
-          if self.is_a?(Class)
-            superclass.respond_to?(method_name) ? superclass.public_send(method_name) : default_value
-          else
-            ancestors[1..-1].each do |ancestor|
-              if ancestor.respond_to?(method_name)
-                return ancestor.public_send(method_name)
-              end
-            end
-            default_value
           end
         end
       end

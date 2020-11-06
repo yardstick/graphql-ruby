@@ -1,5 +1,72 @@
 # graphql-ruby-client
 
+## 1.7.11 (15 June 2020)
+
+- Ably: Improve channel state handling in case the initial subscription result contains errors #2993
+
+## 1.7.10 (13 June 2020)
+
+- Ably: Improve error handling and channel cleanup #2991
+
+## 1.7.9 (15 May 2020)
+
+- Ably: _completely_ unsubscribe when subscriptions are done #2944
+- Ably: propagate errors from subscriptions #2944
+
+## 1.7.8 (1 May 2020)
+
+- `sync`: Add support for Apollo-Android's `OperationOutput.json` #2914
+
+## 1.7.7 (15 Apr 2020)
+
+- Ably handler: dispatch initial response #2866
+- Ably handler: catch any error in initial HTTP call #2877
+
+## 1.7.6 (3 Apr 2020)
+
+- Fix ActionCableLink sending unsubcribe to ActionCable #2842
+
+## 1.7.5 (4 Mar 2020)
+
+- Add missing dependency declarations
+
+## 1.7.4 (18 Feb 2020)
+
+- Move all exports to top level
+- Fix sync body handling: wait for all chunks, improve verbose output
+
+## 1.7.3 (17 Feb 2020)
+
+- Fix CLI for TypeScript
+
+## 1.7.2 (17 Feb 2020)
+
+- Convert outfile generators to TypeScript and include them in published package
+
+## 1.7.1 (17 Feb 2020)
+
+- Fix `bin` configuration in package.json
+
+## 1.7.0 (17 Feb 2020)
+
+- Rewrite in TypeScript
+
+## 1.6.8 (18 Sept 2019)
+
+- Properly send `Content-Type: application/json` when posting persisted operations
+
+## 1.6.7 (18 Sept 2019)
+
+- Add post data to `--verbose` output of `sync`
+
+## 1.6.6 (6 Aug 2019)
+
+- Add `--relay-persisted-output` for working with Relay Compiler's new `--persist-output` option #2415
+
+## 1.6.5 (17 July 2019)
+
+- Update dependencies #2335
+
 ## 1.6.4 (11 May 2019)
 
 - Add `--verbose` option to `sync` #2075

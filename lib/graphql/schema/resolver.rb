@@ -29,15 +29,18 @@ module GraphQL
 
       # @param object [Object] the initialize object, pass to {Query.initialize} as `root_value`
       # @param context [GraphQL::Query::Context]
-      def initialize(object:, context:)
+      # @param field [GraphQL::Schema::Field]
+      def initialize(object:, context:, field:)
         @object = object
         @context = context
+        @field = field
         # Since this hash is constantly rebuilt, cache it for this call
         @arguments_by_keyword = {}
         self.class.arguments.each do |name, arg|
           @arguments_by_keyword[arg.keyword] = arg
         end
         @arguments_loads_as_type = self.class.arguments_loads_as_type
+        @prepared_arguments = nil
       end
 
       # @return [Object] The application object this field is being resolved on
@@ -45,6 +48,13 @@ module GraphQL
 
       # @return [GraphQL::Query::Context]
       attr_reader :context
+
+      # @return [GraphQL::Schema::Field]
+      attr_reader :field
+
+      def arguments
+        @prepared_arguments || raise("Arguments have not been prepared yet, still waiting for #load_arguments to resolve. (Call `.arguments` later in the code.)")
+      end
 
       # This method is _actually_ called by the runtime,
       # it does some preparation and then eventually calls
@@ -69,9 +79,10 @@ module GraphQL
             # for that argument, or may return a lazy object
             load_arguments_val = load_arguments(args)
             context.schema.after_lazy(load_arguments_val) do |loaded_args|
+              @prepared_arguments = loaded_args
               # Then call `authorized?`, which may raise or may return a lazy object
               authorized_val = if loaded_args.any?
-                authorized?(loaded_args)
+                authorized?(**loaded_args)
               else
                 authorized?
               end
@@ -103,7 +114,7 @@ module GraphQL
       # Do the work. Everything happens here.
       # @return [Object] An object corresponding to the return type
       def resolve(**args)
-        raise NotImplementedError, "#{self.class.name}#resolve should execute the field's logic"
+        raise GraphQL::RequiredImplementationMissingError, "#{self.class.name}#resolve should execute the field's logic"
       end
 
       # Called before arguments are prepared.
@@ -123,12 +134,24 @@ module GraphQL
       # Called after arguments are loaded, but before resolving.
       #
       # Override it to check everything before calling the mutation.
-      # @param args [Hash] The input arguments
+      # @param inputs [Hash] The input arguments
       # @raise [GraphQL::ExecutionError] To add an error to the response
       # @raise [GraphQL::UnauthorizedError] To signal an authorization failure
       # @return [Boolean, early_return_data] If `false`, execution will stop (and `early_return_data` will be returned instead, if present.)
-      def authorized?(**args)
-        true
+      def authorized?(**inputs)
+        self.class.arguments.each_value do |argument|
+          arg_keyword = argument.keyword
+          if inputs.key?(arg_keyword) && !(arg_value = inputs[arg_keyword]).nil? && (arg_value != argument.default_value)
+            arg_auth, err = argument.authorized?(self, arg_value, context)
+            if !arg_auth
+              return arg_auth, err
+            else
+              true
+            end
+          else
+            true
+          end
+        end
       end
 
       private
@@ -203,7 +226,7 @@ module GraphQL
         # or use it as a configuration method to assign a return type
         # instead of generating one.
         # TODO unify with {#null}
-        # @param new_type [Class, nil] If a type definition class is provided, it will be used as the return type of the field
+        # @param new_type [Class, Array<Class>, nil] If a type definition class is provided, it will be used as the return type of the field
         # @param null [true, false] Whether or not the field may return `nil`
         # @return [Class] The type which this field returns.
         def type(new_type = nil, null: nil)
@@ -233,6 +256,19 @@ module GraphQL
           @complexity || (superclass.respond_to?(:complexity) ? superclass.complexity : 1)
         end
 
+        def broadcastable(new_broadcastable)
+          @broadcastable = new_broadcastable
+        end
+
+        # @return [Boolean, nil]
+        def broadcastable?
+          if defined?(@broadcastable)
+            @broadcastable
+          else
+            (superclass.respond_to?(:broadcastable?) ? superclass.broadcastable? : nil)
+          end
+        end
+
         def field_options
           {
             type: type_expr,
@@ -243,6 +279,8 @@ module GraphQL
             arguments: arguments,
             null: null,
             complexity: complexity,
+            extensions: extensions,
+            broadcastable: broadcastable?,
           }
         end
 
@@ -254,9 +292,11 @@ module GraphQL
         # Add an argument to this field's signature, but
         # also add some preparation hook methods which will be used for this argument
         # @see {GraphQL::Schema::Argument#initialize} for the signature
-        def argument(name, type, *rest, loads: nil, **kwargs, &block)
-          arg_defn = super(*argument_with_loads(name, type, *rest, loads: loads, **kwargs, &block))
-
+        def argument(*args, **kwargs, &block)
+          loads = kwargs[:loads]
+          # Use `from_resolver: true` to short-circuit the InputObject's own `loads:` implementation
+          # so that we can support `#load_{x}` methods below.
+          arg_defn = super(*args, from_resolver: true, **kwargs)
           own_arguments_loads_as_type[arg_defn.keyword] = loads if loads
 
           if loads && arg_defn.type.list?
@@ -264,7 +304,9 @@ module GraphQL
             def load_#{arg_defn.keyword}(values)
               argument = @arguments_by_keyword[:#{arg_defn.keyword}]
               lookup_as_type = @arguments_loads_as_type[:#{arg_defn.keyword}]
-              GraphQL::Execution::Lazy.all(values.map { |value| load_application_object(argument, lookup_as_type, value) })
+              context.schema.after_lazy(values) do |values2|
+                GraphQL::Execution::Lazy.all(values2.map { |value| load_application_object(argument, lookup_as_type, value, context) })
+              end
             end
             RUBY
           elsif loads
@@ -272,7 +314,7 @@ module GraphQL
             def load_#{arg_defn.keyword}(value)
               argument = @arguments_by_keyword[:#{arg_defn.keyword}]
               lookup_as_type = @arguments_loads_as_type[:#{arg_defn.keyword}]
-              load_application_object(argument, lookup_as_type, value)
+              load_application_object(argument, lookup_as_type, value, context)
             end
             RUBY
           else
@@ -290,6 +332,18 @@ module GraphQL
         def arguments_loads_as_type
           inherited_lookups = superclass.respond_to?(:arguments_loads_as_type) ? superclass.arguments_loads_as_type : {}
           inherited_lookups.merge(own_arguments_loads_as_type)
+        end
+
+        # Registers new extension
+        # @param extension [Class] Extension class
+        # @param options [Hash] Optional extension options
+        def extension(extension, **options)
+          extensions << {extension => options}
+        end
+
+        # @api private
+        def extensions
+          @extensions ||= []
         end
 
         private

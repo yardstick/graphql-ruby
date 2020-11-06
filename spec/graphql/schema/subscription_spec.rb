@@ -34,19 +34,20 @@ describe GraphQL::Schema::Subscription do
     end
 
     class TootWasTooted < BaseSubscription
-      argument :handle, String, required: true, loads: User, as: :user
+      argument :handle, String, required: true, loads: User, as: :user, camelize: false
+
       field :toot, Toot, null: false
       field :user, User, null: false
       # Can't subscribe to private users
-      def authorized?(user:)
+      def authorized?(user:, path:, query:)
         if user[:private]
-          raise GraphQL::ExecutionError, "Can't subscribe to private user"
+          raise GraphQL::ExecutionError, "Can't subscribe to private user (#{path})"
         else
           true
         end
       end
 
-      def subscribe(user:)
+      def subscribe(user:, **args)
         if context[:prohibit_subscriptions]
           raise GraphQL::ExecutionError, "You don't have permission to subscribe"
         else
@@ -55,7 +56,7 @@ describe GraphQL::Schema::Subscription do
         end
       end
 
-      def update(user:)
+      def update(user:, **args)
         if context[:viewer] == user
           # don't update for one's own toots.
           # (IRL it would make more sense to implement this in `#subscribe`)
@@ -66,6 +67,12 @@ describe GraphQL::Schema::Subscription do
           super
         end
       end
+    end
+
+    class DirectTootWasTooted < BaseSubscription
+      subscription_scope :viewer
+      field :toot, Toot, null: false
+      field :user, User, null: false
     end
 
     # Test initial response, which returns all users
@@ -95,8 +102,8 @@ describe GraphQL::Schema::Subscription do
     end
 
     class Subscription < GraphQL::Schema::Object
-      extend GraphQL::Subscriptions::SubscriptionRoot
-      field :toot_was_tooted, subscription: TootWasTooted
+      field :toot_was_tooted, subscription: TootWasTooted, extras: [:path, :query]
+      field :direct_toot_was_tooted, subscription: DirectTootWasTooted
       field :users_joined, subscription: UsersJoined
       field :new_users_joined, subscription: NewUsersJoined
     end
@@ -119,6 +126,11 @@ describe GraphQL::Schema::Subscription do
     subscription(Subscription)
     use GraphQL::Execution::Interpreter
     use GraphQL::Analysis::AST
+    use GraphQL::Execution::Errors
+
+    rescue_from(StandardError) { |err, *rest|
+      raise "This should never happen: #{err.class}: #{err.message}"
+    }
 
     def self.object_from_id(id, ctx)
       USERS[id]
@@ -171,8 +183,8 @@ describe GraphQL::Schema::Subscription do
     use InMemorySubscriptions
   end
 
-  def exec_query(*args)
-    SubscriptionFieldSchema.execute(*args)
+  def exec_query(*args, **kwargs)
+    SubscriptionFieldSchema.execute(*args, **kwargs)
   end
 
   def in_memory_subscription_count
@@ -216,9 +228,21 @@ describe GraphQL::Schema::Subscription do
         }
       }
       GRAPHQL
-
       assert_equal ["dhh", "matz", "_why"], res["data"]["usersJoined"]["users"].map { |u| u["handle"] }
       assert_equal 1, in_memory_subscription_count
+
+      # It works a second time
+      res = exec_query <<-GRAPHQL
+      subscription {
+        usersJoined {
+          users {
+            handle
+          }
+        }
+      }
+      GRAPHQL
+      assert_equal ["dhh", "matz", "_why"], res["data"]["usersJoined"]["users"].map { |u| u["handle"] }
+      assert_equal 2, in_memory_subscription_count
     end
 
     it "rejects the subscription if #subscribe raises an error" do
@@ -280,7 +304,7 @@ describe GraphQL::Schema::Subscription do
         "data"=>nil,
         "errors"=>[
           {
-            "message"=>"Can't subscribe to private user",
+            "message"=>"Can't subscribe to private user ([\"tootWasTooted\"])",
             "locations"=>[{"line"=>2, "column"=>9}],
             "path"=>["tootWasTooted"]
           },
@@ -378,6 +402,8 @@ describe GraphQL::Schema::Subscription do
       assert_equal "Merry Christmas, here's a new Ruby version", mailbox1.first["data"]["tootWasTooted"]["toot"]["body"]
       # But not matz:
       assert_equal [], mailbox2
+      # `:no_update` doesn't cause an unsubscribe
+      assert_equal 2, in_memory_subscription_count
     end
 
     it "unsubscribes if a `loads:` argument is not found" do
@@ -432,9 +458,77 @@ describe GraphQL::Schema::Subscription do
       obj = OpenStruct.new(toot: { body: "Merry Christmas, here's a new Ruby version" }, user: matz)
       SubscriptionFieldSchema.subscriptions.trigger(:toot_was_tooted, {handle: "matz"}, obj)
       assert_equal 2, mailbox.size
-      assert_equal ["Can't subscribe to private user"], mailbox.last["errors"].map { |e| e["message"] }
+      assert_equal ["Can't subscribe to private user ([\"tootWasTooted\"])"], mailbox.last["errors"].map { |e| e["message"] }
       # The subscription remains in place
       assert_equal 1, in_memory_subscription_count
+    end
+  end
+
+  describe "applying `loads:`" do
+    it "includes `as:` in the event topic" do
+      assert_equal [], SubscriptionFieldSchema::InMemorySubscriptions::EVENT_REGISTRY.keys
+      matz = SubscriptionFieldSchema::USERS["matz"]
+      obj = OpenStruct.new(toot: { body: "I am a C programmer" }, user: matz)
+      SubscriptionFieldSchema.subscriptions.trigger(:toot_was_tooted, {handle: "matz"}, obj)
+      assert_equal [":tootWasTooted:user:matz"], SubscriptionFieldSchema::InMemorySubscriptions::EVENT_REGISTRY.keys
+    end
+  end
+
+  describe "`subscription_scope` method" do
+    it "provdes a subscription scope that is recognized in the schema" do
+      scoped_subscription = SubscriptionFieldSchema::get_field("Subscription", "directTootWasTooted")
+
+      assert_equal :viewer, scoped_subscription.subscription_scope
+    end
+
+    it "provides a subscription scope that is used in execution" do
+      res = exec_query <<-GRAPHQL, context: { viewer: :me }
+        subscription {
+          directTootWasTooted {
+            toot { body }
+          }
+        }
+      GRAPHQL
+      assert_equal 1, in_memory_subscription_count
+
+      # Only the subscription with scope :me should be in the mailbox
+      obj = OpenStruct.new(toot: { body: "Hello from matz!" }, user: SubscriptionFieldSchema::USERS["matz"])
+      SubscriptionFieldSchema.subscriptions.trigger(:direct_toot_was_tooted, {}, obj, scope: :me)
+      SubscriptionFieldSchema.subscriptions.trigger(:direct_toot_was_tooted, {}, obj, scope: :not_me)
+      mailbox = res.context[:subscription_mailbox]
+
+      assert_equal 1, mailbox.length
+
+      expected_response = {
+        "data" => {
+          "directTootWasTooted" => {
+            "toot" => {
+              "body" => "Hello from matz!"
+            }
+          }
+        }
+      }
+
+      assert_equal expected_response, mailbox.first
+    end
+
+    it "allows for proper inheritance of the class's configuration in subclasses" do
+      # Make a subclass without an explicit configuration
+      class DirectTootSubclass < SubscriptionFieldSchema::DirectTootWasTooted
+      end
+      # Then check if the field options got the inherited value
+      direct_toot_options = DirectTootSubclass.field_options
+      assert_equal :viewer, direct_toot_options[:subscription_scope]
+    end
+
+    it "allows for setting the subscription scope value to nil" do
+      class PrivateSubscription < SubscriptionFieldSchema::BaseSubscription
+        subscription_scope :private
+      end
+
+      PrivateSubscription.subscription_scope nil
+
+      assert_nil PrivateSubscription.subscription_scope
     end
   end
 end

@@ -33,7 +33,7 @@ describe GraphQL::Schema::NonNull do
     it "will return true if list types 'of_type' are the same" do
       new_of_type = Jazz::Musician
       new_non_null_type = GraphQL::Schema::NonNull.new(new_of_type)
-      
+
       assert_equal non_null_type, new_non_null_type
     end
   end
@@ -41,6 +41,52 @@ describe GraphQL::Schema::NonNull do
   describe "to_graphql" do
     it "will return a non null type" do
       assert_kind_of GraphQL::NonNullType, non_null_type.to_graphql
+    end
+  end
+
+  describe "double-nulling" do
+    it "is a parse error in a query" do
+      res = Jazz::Schema.execute "
+      query($id: ID!!) {
+        find(id: $id) { __typename }
+      }
+      "
+
+      assert_equal ['Parse error on "!" (BANG) at [2, 21]'], res["errors"].map { |e| e["message"] }
+    end
+  end
+
+  describe "Introspection" do
+    class NonNullIntrospectionSchema < GraphQL::Schema
+      class Query < GraphQL::Schema::Object
+        field :strs, [String], null: false
+      end
+
+      query Query
+      use GraphQL::Execution::Interpreter
+      use GraphQL::Analysis::AST
+    end
+
+    it "doesn't break on description" do
+      res = NonNullIntrospectionSchema.execute(<<-GRAPHQL).to_h
+        query IntrospectionQuery {
+          __type(name: "Query") {
+            fields {
+              type {
+                description
+                ofType {
+                  description
+                  ofType {
+                    description
+                  }
+                }
+              }
+            }
+          }
+        }
+      GRAPHQL
+
+      assert_equal [nil], res["data"]["__type"]["fields"].map { |f| f["description"] }
     end
   end
 end

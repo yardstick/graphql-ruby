@@ -158,6 +158,7 @@ Read more here: ["Using CORS"](https://www.html5rocks.com/en/tutorials/cors/).
 Your server needs to receive webhooks from Ably when clients disconnect. This keeps your local subscription database in sync with Ably.
 
 ### Server
+
 *Note: if you're setting up in a development environment you should follow the [Developing with webhooks](#Developing-with-webhooks) section first*
 
 Mount the Rack app for handling webhooks from Ably. For example, on Rails:
@@ -176,22 +177,41 @@ end
 ```
 
 ### Ably
+
 1. Go to the Ably dashboard
 2. Click on your application.
 3. Select the "Reactor" tab
 4. Click on the "+ New Reactor Rule" button
 5. Click on the "Choose" button for "Reactor Event"
 6. Click on the "Choose" button for "WebHooks"
-7. Enter your url (including the webhooks path from above) in the URL field
-8. Under "Source" select "Channel Lifecycle"
-9. Under "Sign with key" select the API Key prefix that matches the prefix of the ABLY_API_KEY you provided.
-10. Click "Create"
+7. Enter your url (including the webhooks path from above) in the URL field.
+8. Select "Batch request" for "Request Mode"
+9. Under "Source" select "Channel Lifecycle"
+10. Under "Sign with key" select the API Key prefix that matches the prefix of the ABLY_API_KEY you provided.
+11. Click "Create"
+
+## Authorization
+
+You can use Ably's [token authentication](https://www.ably.io/documentation/realtime/authentication#token-authentication) by implementing an endpoint in your app, for example:
+
+```ruby
+class AblyController < ActionController::Base
+  def auth
+    render status: 201, json: ably_rest_client.auth.create_token_request(
+      capability: { '*' => ['presence', 'subscribe'] },
+      client_id: 'graphql-subscriber',
+    )
+  end
+end
+```
+
+[Ably's tutorial](https://www.ably.io/tutorials/webhook-chuck-norris#tutorial-step-4) also demonstrates some of the setup for this.
 
 ## Serializing Context
 
 Since subscription state is stored in the database, then reloaded for pushing updates, you have to serialize and reload your query `context`.
 
-By default, this is done with {{ "GraphQL::Subscriptions::Serialize" | api_doc }}'s `dump` and `load` methods, but you can provide custom implementations as well. To customize the serialization logic, create a subclass of `GraphQL::Pro::Subscriptions` and override `#dump_context(ctx)` and `#load_context(ctx_string)`:
+By default, this is done with {{ "GraphQL::Subscriptions::Serialize" | api_doc }}'s `dump` and `load` methods, but you can provide custom implementations as well. To customize the serialization logic, create a subclass of `GraphQL::Pro::AblySubscriptions` and override `#dump_context(ctx)` and `#load_context(ctx_string)`:
 
 ```ruby
 class CustomSubscriptions < GraphQL::Pro::AblySubscriptions

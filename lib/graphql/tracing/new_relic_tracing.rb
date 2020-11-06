@@ -26,18 +26,7 @@ module GraphQL
         if key == "execute_query"
           set_this_txn_name =  data[:query].context[:set_new_relic_transaction_name]
           if set_this_txn_name == true || (set_this_txn_name.nil? && @set_transaction_name)
-            query = data[:query]
-            # Set the transaction name based on the operation type and name
-            selected_op = query.selected_operation
-            if selected_op
-              op_type = selected_op.operation_type
-              op_name = selected_op.name || "anonymous"
-            else
-              op_type = "query"
-              op_name = "anonymous"
-            end
-
-            NewRelic::Agent.set_transaction_name("GraphQL/#{op_type}.#{op_name}")
+            NewRelic::Agent.set_transaction_name(transaction_name(data[:query]))
           end
         end
 
@@ -48,6 +37,14 @@ module GraphQL
 
       def platform_field_key(type, field)
         "GraphQL/#{type.graphql_name}/#{field.graphql_name}"
+      end
+
+      def platform_authorized_key(type)
+        "GraphQL/Authorize/#{type.graphql_name}"
+      end
+
+      def platform_resolve_type_key(type)
+        "GraphQL/ResolveType/#{type.graphql_name}"
       end
     end
   end

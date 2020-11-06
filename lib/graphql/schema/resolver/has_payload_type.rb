@@ -26,8 +26,10 @@ module GraphQL
         def field_class(new_class = nil)
           if new_class
             @field_class = new_class
+          elsif defined?(@field_class) && @field_class
+            @field_class
           else
-            @field_class || find_inherited_method(:field_class, GraphQL::Schema::Field)
+            find_inherited_value(:field_class, GraphQL::Schema::Field)
           end
         end
 
@@ -37,8 +39,9 @@ module GraphQL
         def object_class(new_class = nil)
           if new_class
             @object_class = new_class
+          else
+            @object_class || find_inherited_value(:object_class, GraphQL::Schema::Object)
           end
-          @object_class || (superclass.respond_to?(:object_class) ? superclass.object_class : GraphQL::Schema::Object)
         end
 
         private
@@ -55,7 +58,8 @@ module GraphQL
             resolver_fields.each do |name, f|
               # Reattach the already-defined field here
               # (The field's `.owner` will still point to the mutation, not the object type, I think)
-              add_field(f)
+              # Don't re-warn about a method conflict. Since this type is generated, it should be fixed in the resolver instead.
+              add_field(f, method_conflict_warning: false)
             end
           end
         end

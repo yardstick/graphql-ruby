@@ -8,9 +8,11 @@ desc: Run multiple queries concurrently
 index: 10
 ---
 
-Some clients may send _several_ queries to the server at once (for example, [Apollo Client's query batching](https://www.apollographql.com/docs/react/advanced/network-layer.html#query-batching)). You can execute them concurrently with {{ "Schema#multiplex" | api_doc }}.
+Some clients may send _several_ queries to the server at once (for example, [Apollo Client's query batching](https://www.apollographql.com/docs/react/api/link/apollo-link-batch-http/)). You can execute them concurrently with {{ "Schema#multiplex" | api_doc }}.
 
 Multiplex runs have their own context, analyzers and instrumentation.
+
+__NOTE:__ As an implementation detail, _all_ queries are run inside multiplexes. That is, a stand-alone query is executed as a "multiplex of one", so instrumentation and multiplex analyzers and instrumentation _will_ apply to standalone queries run with `MySchema.execute(...)`.
 
 ## Concurrent Execution
 
@@ -45,18 +47,18 @@ Then, pass them to `Schema#multiplex`:
 results = MySchema.multiplex(queries)
 ```
 
-`results` will contain the result for each query in `queries`.
+`results` will contain the result for each query in `queries`. __NOTE:__ The results will always be in the same order that their respective requests were sent in.
 
 ## Apollo Query Batching
 
-Apollo sends the batch variables in a `_json` param, you also need to ensure that your schema can handle both batched and non-batched queries, below is an example of the default GraphqlController rewritten to handle Apollo batches:
+Apollo sends batches of queries as an array of queries. Rails' ActionDispatch will parse the request and put the result into the `_json` field of the `params` variable. You also need to ensure that your schema can handle both batched and non-batched queries, below is an example of the default GraphqlController rewritten to handle Apollo batches:
 
 ```ruby
 def execute
   context = {}
 
-  # Apollo sends the params in a _json variable when batching is enabled
-  # see the Apollo Documentation about query batching: https://www.apollographql.com/docs/react/advanced/network-layer.html#query-batching
+  # Apollo sends the queries in an array when batching is enabled. The data ends up in the _json field of the params variable.
+  # see the Apollo Documentation about query batching: https://www.apollographql.com/docs/react/api/link/apollo-link-batch-http/
   result = if params[:_json]
     queries = params[:_json].map do |param|
       {
@@ -76,15 +78,13 @@ def execute
     )
   end
 
-  render json: result
+  render json: result, root: false
 end
 ```
 
-If Apollo Client has issues recognizing the result of `render json: result`, replace it with `render body: result.to_json, content_type: 'application/json'`.
-
 ## Validation and Error Handling
 
-Each query is validated and {% internal_link "analyzed","/queries/analysis" %} independently. The `results` array may include a mix of successful results and failed results
+Each query is validated and {% internal_link "analyzed","/queries/ast_analysis" %} independently. The `results` array may include a mix of successful results and failed results
 
 ## Multiplex-Level Context
 
@@ -101,17 +101,13 @@ This will be available to instrumentation as `multiplex.context[:current_user]` 
 You can analyze _all_ queries in a multiplex by adding a multiplex analyzer. For example:
 
 ```ruby
-class MySchema < GraphQL::Schema do
+class MySchema < GraphQL::Schema
   # ...
   multiplex_analyzer(MyAnalyzer)
 end
 ```
 
-The API is the same as {% internal_link "query analyzers","/queries/analysis" %}, with some considerations:
-
-- `initial_value` is called at the start of the _multiplex_ (not query)
-- `final` is called at the end of the _multiplex_ (not query)
-- `call(...)` is called for each node in _each_ query, so it will visit every node in the multiplex in sequence.
+The API is the same as {% internal_link "query analyzers","/queries/ast_analysis#analyzing-multiplexes" %}.
 
 Multiplex analyzers may return {{ "AnalysisError" | api_doc }} to halt execution of the whole multiplex.
 

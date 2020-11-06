@@ -35,7 +35,7 @@ end
 require 'rubocop/rake_task'
 RuboCop::RakeTask.new
 
-default_tasks = [:test, :rubocop, "js:all"]
+default_tasks = [:test, :rubocop]
 if ENV["SYSTEM_TESTS"]
   task(default: ["test:system"] + default_tasks)
 else
@@ -62,7 +62,7 @@ ERR
   end
 
   assert_dependency_version("Ragel", "7.0.0.9", "ragel -v")
-  assert_dependency_version("Racc", "1.4.14", %|ruby -e "require 'racc'; puts Racc::VERSION"|)
+  assert_dependency_version("Racc", "1.4.16", %|ruby -e "require 'racc'; puts Racc::VERSION"|)
 
   `rm -f lib/graphql/language/parser.rb lib/graphql/language/lexer.rb `
   `racc lib/graphql/language/parser.y -o lib/graphql/language/parser.rb`
@@ -131,12 +131,11 @@ namespace :js do
     end
   end
 
-  desc "Publish the package to NPM"
-  task :publish do
+  desc "Compile TypeScript to JavaScript"
+  task :build do
     Dir.chdir(client_dir) do
-      system("npm publish")
+      system("yarn tsc")
     end
   end
-
-  task all: [:install, :test]
+  task all: [:install, :build, :test]
 end

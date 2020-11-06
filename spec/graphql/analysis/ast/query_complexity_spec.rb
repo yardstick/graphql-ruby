@@ -2,9 +2,21 @@
 require "spec_helper"
 
 describe GraphQL::Analysis::AST::QueryComplexity do
+  let(:schema) { Dummy::Schema }
   let(:reduce_result) { GraphQL::Analysis::AST.analyze_query(query, [GraphQL::Analysis::AST::QueryComplexity]) }
+  let(:reduce_multiplex_result) {
+    GraphQL::Analysis::AST.analyze_multiplex(multiplex, [GraphQL::Analysis::AST::QueryComplexity])
+  }
   let(:variables) { {} }
-  let(:query) { GraphQL::Query.new(Dummy::Schema, query_string, variables: variables) }
+  let(:query) { GraphQL::Query.new(schema, query_string, variables: variables) }
+  let(:multiplex) {
+    GraphQL::Execution::Multiplex.new(
+      schema: schema,
+      queries: [query.dup, query.dup],
+      context: {},
+      max_complexity: 10
+    )
+  }
 
   describe "simple queries" do
     let(:query_string) {%|
@@ -89,7 +101,7 @@ describe GraphQL::Analysis::AST::QueryComplexity do
               origin
             }
 
-            # 1 for honey
+            # 1 for honey, aspartame
             ... on Sweetener {
               sweetness
             }
@@ -147,7 +159,7 @@ describe GraphQL::Analysis::AST::QueryComplexity do
             # 1 for everybody
             ... on Edible { origin }
 
-            # 1 for honey
+            # 1 for honey, aspartame
             ... on Sweetener { sweetness }
           }
         }
@@ -185,6 +197,25 @@ describe GraphQL::Analysis::AST::QueryComplexity do
         assert_equal 3, complexity
       end
     end
+
+    describe "redundant fields not within a fragment" do
+      let(:query_string) {%|
+      {
+        cheese {
+          id
+        }
+
+        cheese {
+          id
+        }
+      }
+      |}
+
+      it "only counts them once" do
+        complexity = reduce_result.first
+        assert_equal 2, complexity
+      end
+    end
   end
 
   describe "relay types" do
@@ -212,61 +243,85 @@ describe GraphQL::Analysis::AST::QueryComplexity do
     end
   end
 
+  describe "calucation complexity for a multiplex" do
+    let(:query_string) {%|
+      query cheeses {
+        cheese(id: 1) {
+          id
+          flavor
+          source
+        }
+      }
+    |}
+
+
+    it "sums complexity for both queries" do
+      complexity = reduce_multiplex_result.first
+      assert_equal 8, complexity
+    end
+
+    describe "abstract type" do
+      let(:query_string) {%|
+        query Edible {
+          allEdible {
+            origin
+            fatContent
+          }
+        }
+      |}
+      it "sums complexity for both queries" do
+        complexity = reduce_multiplex_result.first
+        assert_equal 6, complexity
+      end
+    end
+  end
+
   describe "custom complexities" do
+    class CustomComplexitySchema < GraphQL::Schema
+      module ComplexityInterface
+        include GraphQL::Schema::Interface
+        field :value, Int, null: true
+      end
+
+      class SingleComplexity < GraphQL::Schema::Object
+        field :value, Int, null: true, complexity: 0.1
+        field :complexity, SingleComplexity, null: true do
+          argument :int_value, Int, required: false
+          complexity(->(ctx, args, child_complexity) { args[:int_value] + child_complexity })
+        end
+        implements ComplexityInterface
+      end
+
+      class DoubleComplexity < GraphQL::Schema::Object
+        field :value, Int, null: true, complexity: 4
+        implements ComplexityInterface
+      end
+
+      class Query < GraphQL::Schema::Object
+        field :complexity, SingleComplexity, null: true do
+          argument :int_value, Int, required: false
+          complexity ->(ctx, args, child_complexity) { args[:int_value] + child_complexity }
+        end
+
+        field :inner_complexity, ComplexityInterface, null: true do
+          argument :value, Int, required: false
+        end
+      end
+
+      query(Query)
+      orphan_types(DoubleComplexity)
+      use(GraphQL::Execution::Interpreter)
+      use(GraphQL::Analysis::AST)
+    end
+
     let(:query) { GraphQL::Query.new(complexity_schema, query_string) }
-    let(:complexity_schema) {
-      complexity_interface = GraphQL::InterfaceType.define do
-        name "ComplexityInterface"
-        field :value, types.Int
-      end
-
-      single_complexity_type = GraphQL::ObjectType.define do
-        name "SingleComplexity"
-        field :value, types.Int, complexity: 0.1 do
-          resolve ->(obj, args, ctx) { obj }
-        end
-        field :complexity, single_complexity_type do
-          argument :value, types.Int
-          complexity ->(ctx, args, child_complexity) { args[:value] + child_complexity }
-          resolve ->(obj, args, ctx) { args[:value] }
-        end
-        interfaces [complexity_interface]
-      end
-
-      double_complexity_type = GraphQL::ObjectType.define do
-        name "DoubleComplexity"
-        field :value, types.Int, complexity: 4 do
-          resolve ->(obj, args, ctx) { obj }
-        end
-        interfaces [complexity_interface]
-      end
-
-      query_type = GraphQL::ObjectType.define do
-        name "Query"
-        field :complexity, single_complexity_type do
-          argument :value, types.Int
-          complexity ->(ctx, args, child_complexity) { args[:value] + child_complexity }
-          resolve ->(obj, args, ctx) { args[:value] }
-        end
-
-        field :innerComplexity, complexity_interface do
-          argument :value, types.Int
-          resolve ->(obj, args, ctx) { args[:value] }
-        end
-      end
-
-      GraphQL::Schema.define(
-        query: query_type,
-        orphan_types: [double_complexity_type],
-        resolve_type: ->(a,b,c) { :pass }
-      )
-    }
+    let(:complexity_schema) { CustomComplexitySchema }
     let(:query_string) {%|
       {
-        a: complexity(value: 3) { value }
-        b: complexity(value: 6) {
+        a: complexity(intValue: 3) { value }
+        b: complexity(intValue: 6) {
           value
-          complexity(value: 1) {
+          complexity(intValue: 1) {
             value
           }
         }
@@ -282,7 +337,7 @@ describe GraphQL::Analysis::AST::QueryComplexity do
     describe "same field on multiple types" do
       let(:query_string) {%|
       {
-        innerComplexity(value: 2) {
+        innerComplexity(intValue: 2) {
           ... on SingleComplexity { value }
           ... on DoubleComplexity { value }
         }
@@ -294,6 +349,54 @@ describe GraphQL::Analysis::AST::QueryComplexity do
         # 1 for innerComplexity + 4 for DoubleComplexity.value
         assert_equal 5, complexity
       end
+    end
+  end
+
+  describe "field_complexity hook" do
+    class CustomComplexityAnalyzer < GraphQL::Analysis::AST::QueryComplexity
+      def initialize(query)
+        super
+        @field_complexities_by_query = {}
+      end
+
+      def result
+        super
+        @field_complexities_by_query[@query]
+      end
+
+      private
+
+      def field_complexity(scoped_type_complexity, max_complexity:, child_complexity:)
+        @field_complexities_by_query[scoped_type_complexity.query] ||= {}
+        @field_complexities_by_query[scoped_type_complexity.query][scoped_type_complexity.response_path] = {
+          max_complexity: max_complexity,
+          child_complexity: child_complexity,
+        }
+      end
+    end
+
+    let(:reduce_result) { GraphQL::Analysis::AST.analyze_query(query, [CustomComplexityAnalyzer]) }
+
+    let(:query_string) {%|
+    {
+      cheese {
+        id
+      }
+
+      cheese {
+        id
+        flavor
+      }
+    }
+    |}
+    it "gets called for each field with complexity data" do
+      field_complexities = reduce_result.first
+
+      assert_equal({
+        ['cheese', 'id'] => { max_complexity: 1, child_complexity: nil },
+        ['cheese', 'flavor'] => { max_complexity: 1, child_complexity: nil },
+        ['cheese'] => { max_complexity: 3, child_complexity: 2 },
+      }, field_complexities)
     end
   end
 end

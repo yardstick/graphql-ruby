@@ -81,7 +81,7 @@ describe GraphQL::StaticValidation::VariableUsagesAreAllowed do
 
     it "adds an error" do
       assert_equal 3, errors.length
-      assert_equal "Argument 'id' on Field 'cheese' has an invalid value. Expected type 'Int!'.", errors[0]["message"]
+      assert_equal "Argument 'id' on Field 'cheese' has an invalid value ({blah: $id}). Expected type 'Int!'.", errors[0]["message"]
     end
   end
 
@@ -230,6 +230,21 @@ describe GraphQL::StaticValidation::VariableUsagesAreAllowed do
 
       it "is allowed" do
         assert_equal [], errors
+      end
+    end
+
+    describe "nullability mismatch in non-null list" do
+      let(:query_string) {
+        <<-GRAPHQL
+        query ($sizes: [ImageSize!]) {
+          sizedImageUrl(sizes: $sizes)
+        }
+        GRAPHQL
+      }
+
+      it "gives the right error" do
+        err =  "Nullability mismatch on variable $sizes and argument sizes ([ImageSize!] / [ImageSize!]!)"
+        assert_equal [err], errors.map { |e| e["message"]}
       end
     end
   end

@@ -12,16 +12,6 @@ module GraphQL
     #
     # Also, `#unsubscribe` terminates the subscription.
     class Subscription < GraphQL::Schema::Resolver
-      class EarlyTerminationError < StandardError
-      end
-
-      # Raised when `unsubscribe` is called; caught by `subscriptions.rb`
-      class UnsubscribedError < EarlyTerminationError
-      end
-
-      # Raised when `no_update` is returned; caught by `subscriptions.rb`
-      class NoUpdateError < EarlyTerminationError
-      end
       extend GraphQL::Schema::Resolver::HasPayloadType
       extend GraphQL::Schema::Member::HasFields
 
@@ -29,7 +19,7 @@ module GraphQL
       # propagate null.
       null false
 
-      def initialize(object:, context:)
+      def initialize(object:, context:, field:)
         super
         # Figure out whether this is an update or an initial subscription
         @mode = context.query.subscription_update? ? :update : :subscribe
@@ -39,12 +29,12 @@ module GraphQL
       def resolve(**args)
         # Dispatch based on `@mode`, which will raise a `NoMethodError` if we ever
         # have an unexpected `@mode`
-        public_send("resolve_#{@mode}", args)
+        public_send("resolve_#{@mode}", **args)
       end
 
       # Wrap the user-defined `#subscribe` hook
-      def resolve_subscribe(args)
-        ret_val = args.any? ? subscribe(args) : subscribe
+      def resolve_subscribe(**args)
+        ret_val = args.any? ? subscribe(**args) : subscribe
         if ret_val == :no_response
           context.skip
         else
@@ -62,10 +52,10 @@ module GraphQL
       end
 
       # Wrap the user-provided `#update` hook
-      def resolve_update(args)
-        ret_val = args.any? ? update(args) : update
+      def resolve_update(**args)
+        ret_val = args.any? ? update(**args) : update
         if ret_val == :no_update
-          raise NoUpdateError
+          throw :graphql_no_subscription_update
         else
           ret_val
         end
@@ -90,7 +80,29 @@ module GraphQL
 
       # Call this to halt execution and remove this subscription from the system
       def unsubscribe
-        raise UnsubscribedError
+        throw :graphql_subscription_unsubscribed
+      end
+
+      READING_SCOPE = ::Object.new
+      # Call this method to provide a new subscription_scope; OR
+      # call it without an argument to get the subscription_scope
+      # @param new_scope [Symbol]
+      # @return [Symbol]
+      def self.subscription_scope(new_scope = READING_SCOPE)
+        if new_scope != READING_SCOPE
+          @subscription_scope = new_scope
+        elsif defined?(@subscription_scope)
+          @subscription_scope
+        else
+          find_inherited_value(:subscription_scope)
+        end
+      end
+
+      # Overriding Resolver#field_options to include subscription_scope
+      def self.field_options
+        super.merge(
+          subscription_scope: subscription_scope
+        )
       end
     end
   end

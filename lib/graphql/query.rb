@@ -3,6 +3,7 @@ require "graphql/query/arguments"
 require "graphql/query/arguments_cache"
 require "graphql/query/context"
 require "graphql/query/executor"
+require "graphql/query/fingerprint"
 require "graphql/query/literal_input"
 require "graphql/query/null_context"
 require "graphql/query/result"
@@ -44,7 +45,12 @@ module GraphQL
 
     # @return [GraphQL::Language::Nodes::Document]
     def document
-      with_prepared_ast { @document }
+      # It's ok if this hasn't been assigned yet
+      if @query_string || @document
+        with_prepared_ast { @document }
+      else
+        nil
+      end
     end
 
     def inspect
@@ -73,19 +79,24 @@ module GraphQL
     # @param max_complexity [Numeric] the maximum field complexity for this query (falls back to schema-level value)
     # @param except [<#call(schema_member, context)>] If provided, objects will be hidden from the schema when `.call(schema_member, context)` returns truthy
     # @param only [<#call(schema_member, context)>] If provided, objects will be hidden from the schema when `.call(schema_member, context)` returns false
-    def initialize(schema, query_string = nil, query: nil, document: nil, context: nil, variables: nil, validate: true, subscription_topic: nil, operation_name: nil, root_value: nil, max_depth: nil, max_complexity: nil, except: nil, only: nil)
+    def initialize(schema, query_string = nil, query: nil, document: nil, context: nil, variables: nil, validate: true, subscription_topic: nil, operation_name: nil, root_value: nil, max_depth: schema.max_depth, max_complexity: schema.max_complexity, except: nil, only: nil, warden: nil)
       # Even if `variables: nil` is passed, use an empty hash for simpler logic
       variables ||= {}
+
+      # Use the `.graphql_definition` here which will return legacy types instead of classes
+      if schema.is_a?(Class) && !schema.interpreter?
+        schema = schema.graphql_definition
+      end
       @schema = schema
       @filter = schema.default_filter.merge(except: except, only: only)
       @context = schema.context_class.new(query: self, object: root_value, values: context)
+      @warden = warden
       @subscription_topic = subscription_topic
       @root_value = root_value
       @fragments = nil
       @operations = nil
       @validate = validate
-      # TODO: remove support for global tracers
-      @tracers = schema.tracers + GraphQL::Tracing.tracers + (context ? context.fetch(:tracers, []) : [])
+      @tracers = schema.tracers + (context ? context.fetch(:tracers, []) : [])
       # Support `ctx[:backtrace] = true` for wrapping backtraces
       if context && context[:backtrace] && !@tracers.include?(GraphQL::Backtrace::Tracer)
         @tracers << GraphQL::Backtrace::Tracer
@@ -95,7 +106,7 @@ module GraphQL
       if variables.is_a?(String)
         raise ArgumentError, "Query variables should be a Hash, not a String. Try JSON.parse to prepare variables."
       else
-        @provided_variables = variables
+        @provided_variables = variables || {}
       end
 
       @query_string = query_string || query
@@ -113,8 +124,6 @@ module GraphQL
         end
       end
 
-      @arguments_cache = ArgumentsCache.build(self)
-
       # Trying to execute a document
       # with no operations returns an empty hash
       @ast_variables = []
@@ -122,14 +131,13 @@ module GraphQL
       @operation_name = operation_name
       @prepared_ast = false
       @validation_pipeline = nil
-      @max_depth = max_depth || schema.max_depth
-      @max_complexity = max_complexity || schema.max_complexity
+      @max_depth = max_depth
+      @max_complexity = max_complexity
 
       @result_values = nil
       @executed = false
 
       # TODO add a general way to define schema-level filters
-      # TODO also add this to schema dumps
       if @schema.respond_to?(:visible?)
         merge_filters(only: @schema.method(:visible?))
       end
@@ -152,7 +160,7 @@ module GraphQL
       @lookahead ||= begin
         ast_node = selected_operation
         root_type = warden.root_type_for_operation(ast_node.operation_type || "query")
-        root_type = root_type.metadata[:type_class] || raise("Invariant: `lookahead` only works with class-based types")
+        root_type = root_type.type_class || raise("Invariant: `lookahead` only works with class-based types")
         GraphQL::Execution::Lookahead.new(query: self, root_type: root_type, ast_nodes: [ast_node])
       end
     end
@@ -187,6 +195,10 @@ module GraphQL
         }
       end
       @result ||= Query::Result.new(query: self, values: @result_values)
+    end
+
+    def executed?
+      @executed
     end
 
     def static_errors
@@ -229,10 +241,54 @@ module GraphQL
     end
 
     # Node-level cache for calculating arguments. Used during execution and query analysis.
-    # @api private
-    # @return [GraphQL::Query::Arguments] Arguments for this node, merging default values, literal values and query variables
-    def arguments_for(irep_or_ast_node, definition)
-      @arguments_cache[irep_or_ast_node][definition]
+    # @param ast_node [GraphQL::Language::Nodes::AbstractNode]
+    # @param definition [GraphQL::Schema::Field]
+    # @param parent_object [GraphQL::Schema::Object]
+    # @return Hash{Symbol => Object}
+    def arguments_for(ast_node, definition, parent_object: nil)
+      if interpreter?
+        @arguments_cache ||= Execution::Interpreter::ArgumentsCache.new(self)
+        @arguments_cache.fetch(ast_node, definition, parent_object)
+      else
+        @arguments_cache ||= ArgumentsCache.build(self)
+        @arguments_cache[ast_node][definition]
+      end
+    end
+
+    # A version of the given query string, with:
+    # - Variables inlined to the query
+    # - Strings replaced with `<REDACTED>`
+    # @return [String, nil] Returns nil if the query is invalid.
+    def sanitized_query_string(inline_variables: true)
+      with_prepared_ast {
+        GraphQL::Language::SanitizedPrinter.new(self, inline_variables: inline_variables).sanitized_query_string
+      }
+    end
+
+    # This contains a few components:
+    #
+    # - The selected operation name (or `anonymous`)
+    # - The fingerprint of the query string
+    # - The number of given variables (for readability)
+    # - The fingerprint of the given variables
+    #
+    # This fingerprint can be used to track runs of the same operation-variables combination over time.
+    #
+    # @see operation_fingerprint
+    # @see variables_fingerprint
+    # @return [String] An opaque hash identifying this operation-variables combination
+    def fingerprint
+      @fingerprint ||= "#{operation_fingerprint}/#{variables_fingerprint}"
+    end
+
+    # @return [String] An opaque hash for identifying this query's given query string and selected operation
+    def operation_fingerprint
+      @operation_fingerprint ||= "#{selected_operation_name || "anonymous"}/#{Fingerprint.generate(query_string)}"
+    end
+
+    # @return [String] An opaque hash for identifying this query's given a variable values (not including defaults)
+    def variables_fingerprint
+      @variables_fingerprint ||= "#{provided_variables.size}/#{Fingerprint.generate(provided_variables.to_json)}"
     end
 
     def validation_pipeline
@@ -291,6 +347,13 @@ module GraphQL
       with_prepared_ast { @subscription }
     end
 
+    # @api private
+    def with_error_handling
+      schema.error_handler.with_error_handling(context) do
+        yield
+      end
+    end
+
     private
 
     def find_operation(operations, operation_name)
@@ -305,8 +368,7 @@ module GraphQL
 
     def prepare_ast
       @prepared_ast = true
-      @warden = GraphQL::Schema::Warden.new(@filter, schema: @schema, context: @context)
-
+      @warden ||= GraphQL::Schema::Warden.new(@filter, schema: @schema, context: @context)
       parse_error = nil
       @document ||= begin
         if query_string
@@ -363,7 +425,7 @@ module GraphQL
         parse_error: parse_error,
         operation_name_error: operation_name_error,
         max_depth: @max_depth,
-        max_complexity: @max_complexity || schema.max_complexity,
+        max_complexity: @max_complexity
       )
     end
 

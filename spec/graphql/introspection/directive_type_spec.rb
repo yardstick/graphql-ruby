@@ -17,7 +17,12 @@ describe GraphQL::Introspection::DirectiveType do
       }
     }
   |}
-  let(:result) { Dummy::Schema.execute(query_string) }
+
+  let(:schema) { Class.new(Dummy::Schema) }
+  let(:result) { schema.execute(query_string) }
+  before do
+    schema.max_depth(100)
+  end
 
   it "shows directive info " do
     expected = { "data" => {
@@ -48,7 +53,7 @@ describe GraphQL::Introspection::DirectiveType do
             "args" => [
               {"name"=>"reason", "type"=>{"kind"=>"SCALAR", "name"=>"String", "ofType"=>nil}}
             ],
-            "locations"=>["FIELD_DEFINITION", "ENUM_VALUE"],
+            "locations"=>["FIELD_DEFINITION", "ENUM_VALUE", "ARGUMENT_DEFINITION", "INPUT_FIELD_DEFINITION"],
             "onField" => false,
             "onFragment" => false,
             "onOperation" => false,
