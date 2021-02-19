@@ -8,6 +8,77 @@
 
 ### Bug Fix
 
+# 1.17.6 (18 Feb 2021)
+
+### New Features
+
+- Stable connections: implement `range_add_edge` to leverage GraphQL-Ruby 1.12.5's improved RangeAdd #2184
+
+### Bug Fix
+
+- Defer: Update to work with Dataloader
+
+# 1.17.5 (13 Feb 2021)
+
+### Bug Fix
+
+- Subscriptions: Use `MULTI` instead of Lua for some operations
+- Subscriptions: Use `EVAL_SHA` for duplicate scripts to reduce network overhead #3285
+- Subscriptions: Don't use `redis.call`, which is unsupported in the `redis-namespace` gem #3322
+
+# 1.17.4 (4 Feb 2021)
+
+## Bug Fix
+
+- Stable Relation Connection: Don't emit `OR ... IS NULL` for columns that are known to be `null: false` (this improves index utilization)
+
+## 1.17.3 (2 Feb 2021)
+
+### New Features
+
+- Pusher subscriptions: `context[:compress_pusher_payload] = true` will cause the payload to be gzipped before being sent to Pusher
+
+## 1.17.2 (30 Jan 2021)
+
+### Bug Fix
+
+- Subscriptions: don't generate keys inside Lua scripts (for redis-namespace compatibility, and probably better support for Redis cluster) #3307
+
+## 1.17.1 (25 Jan 2021)
+
+### New Features
+
+- OperationStore: add `OperationStore::AddOperationBatch.call` for adding data directly
+- Subscriptions: use Lua scripts for more efficient Redis access
+
+## 1.17.0 (20 Jan 2021)
+
+### New Features
+
+- Updates for 1.12.0 compatibility
+
+### Bug Fix
+
+- OperationStore: improve performance by batching reads and writes during updates
+
+## 1.16.2 (21 Dec 2020)
+
+### New Features
+
+- Subscriptions: Add `stale_ttl_s:` and `cleanup_delay_s:` to customize persistence in Redis #3252
+
+## 1.16.1 (3 Dec 2020)
+
+### Bug Fix
+
+- Fix duplicate calls to `Argument#authorized?` in CanCan and Pundit integrations #3242
+
+## 1.16.0 (10 Nov 2020)
+
+### New Features
+
+- Ably Subscriptions: `cipher_base:` sets up end-to-end encryption
+
 ## 1.15.7 (29 Sept 2020)
 
 ### Bug Fix

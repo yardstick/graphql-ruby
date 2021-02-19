@@ -53,10 +53,11 @@ module GraphQL
       # @param last [Integer, nil] Limit parameter from the client, if provided
       # @param before [String, nil] A cursor for pagination, if the client provided one.
       # @param max_page_size [Integer, nil] A configured value to cap the result size. Applied as `first` if neither first or last are given.
-      def initialize(items, parent: nil, context: nil, first: nil, after: nil, max_page_size: :not_given, last: nil, before: nil, edge_class: nil)
+      def initialize(items, parent: nil, field: nil, context: nil, first: nil, after: nil, max_page_size: :not_given, last: nil, before: nil, edge_class: nil)
         @items = items
         @parent = parent
         @context = context
+        @field = field
         @first_value = first
         @after_value = after
         @last_value = last
@@ -104,6 +105,15 @@ module GraphQL
         end
       end
 
+      # This is called by `Relay::RangeAdd` -- it can be overridden
+      # when `item` needs some modifications based on this connection's state.
+      #
+      # @param item [Object] An item newly added to `items`
+      # @return [Edge]
+      def range_add_edge(item)
+        edge_class.new(item, self)
+      end
+
       attr_writer :last
       # @return [Integer, nil] A clamped `last` value. (The underlying instance variable doesn't have limits on it)
       def last
@@ -117,6 +127,9 @@ module GraphQL
 
       # @return [Class] A wrapper class for edges of this connection
       attr_accessor :edge_class
+
+      # @return [GraphQL::Schema::Field] The field this connection was returned by
+      attr_accessor :field
 
       # @return [Array<Object>] A slice of {items}, constrained by {@first_value}/{@after_value}/{@last_value}/{@before_value}
       def nodes

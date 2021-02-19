@@ -1,6 +1,4 @@
 # frozen_string_literal: true
-# test_via: ../execution/execute.rb
-# test_via: ../execution/lazy.rb
 module GraphQL
   class Query
     # Expose some query-specific info to field resolve functions.
@@ -158,6 +156,10 @@ module GraphQL
         @scoped_context = {}
       end
 
+      def dataloader
+        @dataloader ||= query.multiplex ? query.multiplex.dataloader : schema.dataloader_class.new
+      end
+
       # @api private
       attr_writer :interpreter
 
@@ -167,7 +169,10 @@ module GraphQL
       # @api private
       attr_accessor :scoped_context
 
-      def_delegators :@provided_values, :[]=
+      def []=(key, value)
+        @provided_values[key] = value
+      end
+
       def_delegators :@query, :trace, :interpreter?
 
       # @!method []=(key, value)
