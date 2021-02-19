@@ -1,17 +1,20 @@
 <!DOCTYPE HTML>
 <html lang="en">
   <head>
-    <meta http-equiv="refresh" content="1;url=/api-doc/1.8.13/GraphQL/Schema/Scalar" />
+    <meta http-equiv="refresh" content="1;url=/api-doc/1.12.5/GraphQL/Schema/Scalar" />
   </head>
   <body>
     <p>Class: GraphQL::Schema::Scalar &lt; GraphQL::Schema::Member
 Direct Known Subclasses:
-Types::Boolean, Types::Float, Types::ID, Types::ISO8601DateTime,
-Types::Int, Types::String
+Types::BigInt, Types::Boolean, Types::Float, Types::ID,
+Types::ISO8601Date, Types::ISO8601DateTime, Types::Int, Types::JSON,
+Types::String
 Extended by:
-Forwardable, GraphQL::Schema::Member::AcceptsDefinition
+GraphQL::Schema::Member::AcceptsDefinition,
+GraphQL::Schema::Member::ValidatesInput
 Class methods:
-coerce_input, coerce_result, default_scalar, kind, to_graphql</p>
+coerce_input, coerce_result, default_scalar, default_scalar?, kind,
+to_graphql, validate_non_null_input</p>
 
 
   </body>

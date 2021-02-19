@@ -1,10 +1,10 @@
 <!DOCTYPE HTML>
 <html lang="en">
   <head>
-    <meta http-equiv="refresh" content="1;url=/api-doc/1.8.13/GraphQL/InternalRepresentation/Rewrite" />
+    <meta http-equiv="refresh" content="1;url=/api-doc/1.12.5/GraphQL/InternalRepresentation/Rewrite" />
   </head>
   <body>
-    <p>Class: GraphQL::InternalRepresentation::Rewrite &lt; Object
+    <p>Module: GraphQL::InternalRepresentation::Rewrite
 While visiting an AST, build a normalized, flattened tree of  No
 unions or interfaces are present in this tree, only object types. 
 Selections from the AST are attached to the object types they apply
@@ -14,11 +14,13 @@ Inline fragments and fragment spreads are preserved in
 check for the presence of directives. This might not be sufficient
 for future directives, since the selections’ grouping is lost. 
 The rewritten query tree serves as the basis for the
-<code class="highlighter-rouge">FieldsWillMerge</code> validation. 
+<code class="language-plaintext highlighter-rouge">FieldsWillMerge</code> validation. 
 Includes:
 GraphQL::Language
 Instance methods:
-initialize, operations, skip?, validate</p>
+initialize, on_field, on_fragment_definition, on_fragment_spread,
+on_inline_fragment, on_operation_definition, operations,
+push_root_node, skip?</p>
 
 
   </body>
