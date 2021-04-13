@@ -12,11 +12,21 @@ describe GraphQL::Types::Relay::BaseConnection do
     end
 
     class NonNullableNodeEdgeConnectionType < GraphQL::Types::Relay::BaseConnection
-      edge_type(NodeEdgeType, node_nullable: false)
+      edge_type(NodeEdgeType, node_nullable: false, edges_nullable: false, edge_nullable: false)
+    end
+
+    class NonNullableEdgeClassOverrideConnectionType < GraphQL::Types::Relay::BaseConnection
+      edges_nullable(false)
+      edge_nullable(false)
+      node_nullable(false)
     end
 
     class Query < GraphQL::Schema::Object
       field :connection, NonNullableNodeEdgeConnectionType, null: false
+    end
+
+    class NoNodesFieldClassOverrideConnectionType < GraphQL::Types::Relay::BaseConnection
+      has_nodes_field(false)
     end
 
     class Schema < GraphQL::Schema
@@ -32,6 +42,26 @@ describe GraphQL::Types::Relay::BaseConnection do
     assert_equal "NON_NULL",nodes_field["type"]["ofType"]["ofType"]["kind"]
   end
 
+  it "edges_nullable option is works" do
+    res = NonNullAbleNodeDummy::Schema.execute(GraphQL::Introspection::INTROSPECTION_QUERY)
+    connection_type = res["data"]["__schema"]["types"].find { |t| t["name"] == "NonNullableNodeEdgeConnection" }
+    edges_field = connection_type["fields"].find { |f| f["name"] == "edges" }
+    assert_equal "NON_NULL",edges_field["type"]["kind"]
+  end
+
+  it "supports class-level edges_nullable config" do
+    assert_equal false, NonNullAbleNodeDummy::NonNullableEdgeClassOverrideConnectionType.edges_nullable
+    assert_equal false, NonNullAbleNodeDummy::NonNullableEdgeClassOverrideConnectionType.edge_nullable
+    assert_equal false, NonNullAbleNodeDummy::NonNullableEdgeClassOverrideConnectionType.node_nullable
+  end
+
+  it "edge_nullable option is works" do
+    res = NonNullAbleNodeDummy::Schema.execute(GraphQL::Introspection::INTROSPECTION_QUERY)
+    connection_type = res["data"]["__schema"]["types"].find { |t| t["name"] == "NonNullableNodeEdgeConnection" }
+    edges_field = connection_type["fields"].find { |f| f["name"] == "edges" }
+    assert_equal "NON_NULL",edges_field["type"]["ofType"]["ofType"]["kind"]
+  end
+
   it "never treats nodes like a connection" do
     type = Class.new(GraphQL::Schema::Object) do
       graphql_name "MissedConnection"
@@ -40,5 +70,9 @@ describe GraphQL::Types::Relay::BaseConnection do
 
     refute type.connection_type.fields["nodes"].connection?
     refute type.connection_type.fields["edges"].type.unwrap.fields["node"].connection?
+  end
+
+  it "supports class-level nodes_field config" do
+    assert_equal false, NonNullAbleNodeDummy::NoNodesFieldClassOverrideConnectionType.has_nodes_field
   end
 end

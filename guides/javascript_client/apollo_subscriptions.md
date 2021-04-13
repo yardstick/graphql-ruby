@@ -77,9 +77,11 @@ const pusherLink = new PusherLink({
   pusher: pusherClient,
   decompress: function(compressed) {
     // Decode base64
-    const data = btoa(compressed)
+    const data = atob(compressed)
+      .split('')
+      .map(x => x.charCodeAt(0));
     // Decompress
-    const payloadString = pako.inflate(data, { to: 'string' })
+    const payloadString = pako.inflate(new Uint8Array(data), { to: 'string' });
     // Parse into an object
     return JSON.parse(payloadString);
   }
@@ -147,10 +149,10 @@ import { ApolloLink } from 'apollo-link';
 import { ApolloClient } from 'apollo-client';
 import { HttpLink } from 'apollo-link-http';
 import { InMemoryCache } from 'apollo-cache-inmemory';
-import ActionCable from 'actioncable';
+import { createConsumer } from '@rails/actioncable';
 import ActionCableLink from 'graphql-ruby-client/subscriptions/ActionCableLink';
 
-const cable = ActionCable.createConsumer()
+const cable = createConsumer()
 
 const httpLink = new HttpLink({
   uri: '/graphql',
@@ -174,6 +176,8 @@ const client = new ApolloClient({
   cache: new InMemoryCache()
 });
 ```
+
+Note that for Rails 5, the ActionCable client package is `actioncable`, not `@rails/actioncable`.
 
 ## Apollo 1
 
@@ -228,7 +232,7 @@ For example:
 
 ```js
 // Load ActionCable and create a consumer
-var ActionCable = require('actioncable')
+var ActionCable = require('@rails/actioncable')
 var cable = ActionCable.createConsumer()
 window.cable = cable
 

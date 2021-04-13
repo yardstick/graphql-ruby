@@ -8,6 +8,50 @@
 
 ### Bug Fix
 
+# 1.17.12 (3 Apr 2021)
+
+### Bug Fix
+
+- Stable Connections: Re-select aliased fields that are referenced by ORDER BY. #3421
+
+# 1.17.11 (12 Mar 2021)
+
+### Bug Fix
+
+- Pundit integration: properly halt when `unauthorized_by_pundit` returns errors-as-data after a mutation argument fails authorization #3384
+
+# 1.17.10 (11 Mar 2021)
+
+### Bug Fix
+
+- Pundit, CanCan integrations: properly call configured auth hooks for arguments that are lists and input objects
+
+# 1.17.9 (3 Mar 2021)
+
+### Bug Fix
+
+- Fix OperationStore assignment on GraphQL-Ruby 1.9
+
+# 1.17.8 (23 Feb 2021)
+
+### New Features
+
+- Subscriptions: change the default `cleanup_delay_s:` to 5 seconds (use `cleanup_delay_s: 0` to get the old behavior)
+
+### Bug Fix
+
+- Subscriptions: Handle unsubscribe race condition #3357
+
+# 1.17.7 (19 Feb 2021)
+
+### New Features
+
+- CanCan integration: support `can_can_subject:` config for overriding the use of `object` as the CanCan subject #3350
+
+### Bug Fixes
+
+- Subscriptions: Support `Redis::Namespace` without deprecation warnings for `script load` #3347
+
 # 1.17.6 (18 Feb 2021)
 
 ### New Features

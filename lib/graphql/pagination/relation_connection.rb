@@ -32,7 +32,11 @@ module GraphQL
           @has_next_page = if before_offset && before_offset > 0
             true
           elsif first
-            relation_count(set_limit(sliced_nodes, first + 1)) == first + 1
+            if @nodes && @nodes.count < first
+              false
+            else
+              relation_larger_than(sliced_nodes, first)
+            end
           else
             false
           end
@@ -48,6 +52,13 @@ module GraphQL
       end
 
       private
+
+      # @param relation [Object] A database query object
+      # @param size [Integer] The value against which we check the relation size
+      # @return [Boolean] True if the number of items in this relation is larger than `size`
+      def relation_larger_than(relation, size)
+        relation_count(set_limit(relation, size + 1)) == size + 1
+      end
 
       # @param relation [Object] A database query object
       # @return [Integer, nil] The offset value, or nil if there isn't one

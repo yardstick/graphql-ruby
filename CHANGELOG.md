@@ -8,6 +8,51 @@
 
 ### Bug fixes
 
+# 1.12.8 (12 Apr 2021)
+
+### Bug fixes
+
+- Fix loading single-key hashes in Subscriptions #3428
+- Fix looking up `rescue_from` handlers inherited from parent schema classes #3431
+
+# 1.12.7 (7 Apr 2021)
+
+### Breaking changes
+
+- `Execution::Errors` (which implements `rescue_from`) was refactored so that, when an error matches more than one registered handler, it picks the _most specific_ handler instead of the _first match_ in the underlying Hash. This might "break" your code if your application registered a handler for a parent class and a child class, but expects instances of the child class to be handled by the handler for the parent class. (This seems very unlikely -- I consider the change to be a "breaking fix.") #3404
+
+### New features
+
+- Errors: pick the most specific error handlers (instead of an order-dependent selection) #3404
+- Add `node_nullable(...)` connection configuration options #3389
+- Add `has_nodes_field(true|false)` connection configuration option #3388
+- Store more metadata in argument-related static validation errors #3406
+
+### Bug fixes
+
+- Fix connection nullability settings to properly handle `false` #3386
+- Fix returning `RawValue`s as part of a list #3403
+- Fix introspection for deprecated directive arguments #3416
+- Optimize `has_next_page` for ActiveRecord::Relation connections #3414
+- Tracing: consistent event sequencing when queries are executed with `Query#result` #3408
+
+# 1.12.6 (11 March 2021)
+
+### Breaking changes
+
+- Static validation: previously, variables passed as arguments to input objects were not properly type-checked. #3370 fixed type checking in this case, but may case existing (invalid) queries to break.
+
+### New features
+
+- Connection types: support `edges_nullable(false)` and `edge_nullable(false)` for non-null fields #3376
+- Connections: add `.arguments` reader to new `Pagination::Connection` classes #3360
+
+### Bug fixes
+
+- Relation connection: Remove extra `COUNT` query from some scenarios #3373
+- Add a Bootsnap-style parsing cache when Bootsnap is detected #3156
+- Fix input validation for input object variables #3370
+
 # 1.12.5 (18 February 2021)
 
 ### New features
